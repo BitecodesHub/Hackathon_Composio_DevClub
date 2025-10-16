@@ -7,7 +7,7 @@ from googleapiclient.discovery import build
 
 SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
 
-KEYWORDS = ['Resume','resume', 'cv', 'application']  # filenames containing these will be downloaded
+KEYWORDS = ['Resume','resume', 'cv', 'job application']  # filenames containing these will be downloaded
 
 def authenticate_gmail():
     """Authenticate with Gmail API and return service object"""

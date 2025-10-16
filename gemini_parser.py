@@ -18,7 +18,7 @@ logging.basicConfig(
 # --------------------------
 # Load Gemini API key
 # --------------------------
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+GEMINI_API_KEY = 'AIzaSyDj63l6Em6gSpAmPUTZUSKaZJ988UmrN84'
 if not GEMINI_API_KEY:
     raise ValueError("❌ GEMINI_API_KEY not set. Please export your Gemini API key.")
 
