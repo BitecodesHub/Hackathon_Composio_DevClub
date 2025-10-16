@@ -1,81 +1,114 @@
 # AI Recruiter Copilot
 
-This project parses resumes from Gmail, enriches candidate data via the Gemini API, schedules interviews in Google Calendar, and updates a pipeline in Google Sheets or Notion.
+This project automates the recruitment workflow by parsing resumes from Gmail, enriching candidate data using the Gemini API, scheduling interviews in Google Calendar, and updating a candidate pipeline in Google Sheets or Notion.
 
 ## Project Setup
 
-### 1. Clone the repository
-```bash
-git clone <your-repo-url>
-cd <your-repo-folder>
-```
+1. **Clone the repository**
+   ```bash
+   git clone <your-repo-url>
+   cd <your-repo-folder>
+   ```
 
-### 2. Create and activate a virtual environment
-```bash
-python3 -m venv venv
-source venv/bin/activate  # On macOS/Linux
-# OR
-venv\Scripts\activate  # On Windows
-```
+2. **Create and activate a virtual environment**
+   ```bash
+   python3 -m venv venv
+   source venv/bin/activate  # On macOS/Linux
+   # OR
+   venv\Scripts\activate  # On Windows
+   ```
 
-### 3. Install required packages
-```bash
-pip install --upgrade pip
-pip install -r requirements.txt
-```
+3. **Install required packages**
+   ```bash
+   pip install --upgrade pip
+   pip install -r requirements.txt
+   ```
 
-### 4. Setting up Gemini API Key
-1. Go to [Google AI Studio API Keys](https://aistudio.google.com/app/apikey)
-2. Click **Create API Key**
-3. Copy the key
-4. Export it in terminal:
-```bash
-export GEMINI_API_KEY="YOUR_NEW_GEMINI_KEY"
-```
-5. Alternatively, you can hardcode it in `gemini_parser.py` (not recommended for production)
+4. **Setting up Gemini API Key**
+   - Go to [Google AI Studio API Keys](https://aistudio.google.com/app/apikey)
+   - Click **Create API Key**
+   - Copy the key
+   - Export it in terminal:
+     ```bash
+     export GEMINI_API_KEY="YOUR_NEW_GEMINI_KEY"
+     ```
+   - Alternatively, you can hardcode it in `gemini_parser.py` (not recommended).
 
-### 5. Configure Gmail API
-1. Go to [Google Cloud Console](https://console.cloud.google.com/)
-2. Create a new project or select an existing project
-3. Enable **Gmail API**
-4. Create OAuth credentials and download `credentials.json`
-5. Place `credentials.json` in the project root
+5. **Configure Gmail API**
+   - Go to [Google Cloud Console](https://console.cloud.google.com/)
+   - Create a new project or select an existing project
+   - Enable Gmail API
+   - Create OAuth credentials and download `credentials.json`
+   - Place `credentials.json` in the project root
 
-### 6. Configure Google Sheets / Notion (optional)
-- For Google Sheets:
-  - Enable **Google Sheets API**
-  - Create OAuth credentials
-- For Notion:
-  - Create an integration token
-  - Share target databases with the integration
+6. **Configure Google Sheets / Notion (optional)**
+   - **Google Sheets**:
+     - Enable Google Sheets API
+     - Create OAuth credentials
+   - **Notion**:
+     - Create an integration token
+     - Share target databases with the integration
+
+## Project File Structure & Description
+
+| File / Script                  | Purpose                                                                 |
+|--------------------------------|-------------------------------------------------------------------------|
+| `parse_resumes.py`            | Extract text from PDF/DOCX resumes and save .txt files.                 |
+| `gemini_parser.py`            | Send parsed resume text to Gemini API and get structured JSON with candidate details. |
+| `fetch_resumes.py`            | (Optional) Connect to Gmail, download new resumes into `resumes/` folder. |
+| `schedule_interviews.py`      | Schedule interviews automatically in Google Calendar using candidate info. |
+| `update_pipeline_sheets.py`   | Update candidate information into Google Sheets.                        |
+| `update_pipeline_notion.py`   | Update candidate information into Notion database.                      |
+| `requirements.txt`            | Contains all Python dependencies for the project.                       |
+| `.env`                        | Optional: Store environment variables like `GEMINI_API_KEY`.            |
+| `resumes/`                    | Folder where raw resumes (PDF/DOCX) are stored.                         |
+| `parsed_text/`                | Folder to store extracted text from resumes.                           |
+| `parsed_json/`                | Folder to store structured JSON output from Gemini.                    |
+| `token.json`                  | OAuth token for Google API access (auto-generated on first run).        |
 
 ## Running the Project
 
-### 1. Parse resumes using Gemini
-```bash
-python gemini_parser.py
-```
+1. **Fetch resumes from Gmail (if implemented)**
+   ```bash
+   python fetch_resumes.py
+   ```
 
-### 2. Fetch resumes from Gmail (if implemented separately)
-```bash
-python fetch_resumes.py
-```
+2. **Parse resumes into text**
+   ```bash
+   python parse_resumes.py
+   ```
 
-### 3. Stepwise implementation
-- Step 1: Gmail Integration (`step1_gmail.py`)
-- Step 2: Gemini Parsing (`step2_gemini_parser.py`)
-- Step 3: Update Sheets/Notion (`step3_pipeline_update.py`)
-- Step 4: Schedule interviews (`step4_calendar.py`)
+3. **Send resumes to Gemini API**
+   ```bash
+   python gemini_parser.py
+   ```
 
-## Notes
-- Ensure `GEMINI_API_KEY` is set before running scripts
-- Wait a few minutes after enabling APIs in Google Cloud for propagation
-- Use virtual environment to avoid conflicts
+4. **Schedule interviews**
+   ```bash
+   python schedule_interviews.py
+   ```
+
+5. **Update candidate pipeline**
+   - Google Sheets:
+     ```bash
+     python update_pipeline_sheets.py
+     ```
+   - Notion:
+     ```bash
+     python update_pipeline_notion.py
+     ```
+
+## Notes & Best Practices
+
+- Ensure `GEMINI_API_KEY` is set before running Gemini scripts.
+- After enabling APIs in Google Cloud, wait a few minutes for propagation.
+- Use a virtual environment to avoid dependency conflicts.
+- Delete `token.json` if you change Google project or OAuth scopes.
 
 ## Troubleshooting
-- `403 SERVICE_DISABLED`: Your Gemini API key is tied to a project where the Generative Language API is not enabled. Create a new key in AI Studio or ask project owner to enable API.
-- Gmail OAuth errors: Ensure `credentials.json` is correct and token file is valid.
 
----
-This README is downloadable and can be placed directly in the root of your project.
-
+| Error                              | Solution                                                                 |
+|------------------------------------|-------------------------------------------------------------------------|
+| `403 SERVICE_DISABLED`            | Gemini API key’s project does not have Generative Language API enabled. Create a new key in AI Studio or enable API. |
+| Gmail OAuth errors                | Ensure `credentials.json` is correct, delete old `token.json` to force re-authentication. |
+| Google Calendar `insufficientPermissions` | Delete `token.json` and ensure `SCOPES = ['https://www.googleapis.com/auth/calendar.events']`. |
