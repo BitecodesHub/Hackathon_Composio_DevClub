@@ -1,0 +1,38 @@
+{
+  "full_name": "Ismail Mansuri",
+  "email": "ismailmansury9737@gmail.com",
+  "phone": "9428767709",
+  "skills": [
+    "Maths",
+    "Coding",
+    "Computer Architecture",
+    "English",
+    "Hindi",
+    "Gujarati"
+  ],
+  "education": [
+    {
+      "degree": "BCA (Bachelor of Computer Application)",
+      "institution": "Gujarat University",
+      "year_of_passing": "2024",
+      "percentage": "71.00"
+    },
+    {
+      "degree": "Class XII",
+      "institution": "Ankur High School",
+      "board": "Gujarat Board",
+      "year_of_passing": "2022",
+      "percentage": "72.26"
+    },
+    {
+      "degree": "Class X",
+      "institution": "Gujarat Law Society",
+      "board": "Gujarat Board",
+      "year_of_passing": "2020",
+      "percentage": "63.32"
+    }
+  ],
+  "experience_summary": "No work experience is listed in this document, which is a university admission form.",
+  "current_company": null,
+  "current_role": null
+}
