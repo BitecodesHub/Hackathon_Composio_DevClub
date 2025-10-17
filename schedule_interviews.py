@@ -20,6 +20,13 @@ logging.basicConfig(
 SCOPES = ['https://www.googleapis.com/auth/calendar.events']
 CREDENTIALS_FILE = "credentials.json"
 TOKEN_FILE = "token.json"
+SCHEDULE_LOG_FOLDER = "scheduled_interviews"
+
+# --------------------------
+# Utility
+# --------------------------
+def ensure_folder(folder):
+    os.makedirs(folder, exist_ok=True)
 
 def get_calendar_service():
     creds = None
@@ -43,6 +50,8 @@ def schedule_interview(service, candidate, start_time, calendar_id='primary', du
     if not email:
         logging.warning(f"Skipping {name}: no email found.")
         return None
+
+    ensure_folder(SCHEDULE_LOG_FOLDER)
     
     end_time = start_time + timedelta(minutes=duration_minutes)
     
@@ -56,9 +65,34 @@ def schedule_interview(service, candidate, start_time, calendar_id='primary', du
     }
     
     created_event = service.events().insert(calendarId=calendar_id, body=event).execute()
+    
+    # Log scheduled interview info
+    event_id = created_event.get("id")
+    calendar_link = created_event.get("htmlLink")
+    
+    schedule_record = {
+        "candidate_name": name,
+        "email": email,
+        "start_time": start_time.isoformat(),
+        "end_time": end_time.isoformat(),
+        "event_id": event_id,
+        "calendar_link": calendar_link,
+        "timestamp": datetime.now(timezone.utc).isoformat()
+    }
+
+    # Save individual file for this candidate
+    safe_name = name.replace(" ", "_").lower()
+    filename = f"{safe_name}_{start_time.strftime('%Y%m%dT%H%M')}.json"
+    filepath = os.path.join(SCHEDULE_LOG_FOLDER, filename)
+
+    with open(filepath, "w") as f:
+        json.dump(schedule_record, f, indent=2)
+
     logging.info(f"✅ Scheduled interview for {name} ({email}) at {start_time.strftime('%Y-%m-%d %H:%M')} UTC")
+    logging.info(f"🗓️  Saved to {filepath}")
     
     return end_time
+
 
 def process_all_candidates(
     input_folder="enriched_json",
@@ -82,6 +116,7 @@ def process_all_candidates(
         skip_weekends: Whether to skip Saturday and Sunday
     """
     service = get_calendar_service()
+    ensure_folder(SCHEDULE_LOG_FOLDER)
     
     # Initialize start time (timezone-aware)
     if start_date is None:
@@ -131,7 +166,19 @@ def process_all_candidates(
             else:
                 skipped_count += 1
     
+    summary = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "scheduled_count": scheduled_count,
+        "skipped_count": skipped_count
+    }
+
+    # Save a summary file for the run
+    summary_file = os.path.join(SCHEDULE_LOG_FOLDER, f"summary_{datetime.now().strftime('%Y%m%dT%H%M')}.json")
+    with open(summary_file, "w") as f:
+        json.dump(summary, f, indent=2)
+    
     logging.info(f"✅ Scheduling complete! {scheduled_count} interviews scheduled, {skipped_count} skipped.")
+    logging.info(f"🗂️  Summary saved to {summary_file}")
 
 # --------------------------
 # Entry point
@@ -139,7 +186,6 @@ def process_all_candidates(
 if __name__ == "__main__":
     logging.info("Starting to schedule interviews...")
     
-    # Example: Schedule with custom settings
     process_all_candidates(
         duration_minutes=45,      # 45-minute interviews
         buffer_minutes=15,        # 15-minute buffer between interviews
@@ -147,4 +193,4 @@ if __name__ == "__main__":
         skip_weekends=True        # Skip Saturday/Sunday
     )
     
-    logging.info("✅ All interviews scheduled!")
+    logging.info("✅ All interviews scheduled and stored in /scheduled_interviews/")

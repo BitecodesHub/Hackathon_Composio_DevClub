@@ -410,6 +410,71 @@ def enrich_candidates():
 # Interview Scheduling Routes
 # --------------------------
 
+@app.route('/api/interviews/scheduled', methods=['GET'])
+def get_scheduled_interviews():
+    """Fetch all scheduled interviews"""
+    try:
+        folder = 'scheduled_interviews'
+        interviews = []
+        
+        if not os.path.exists(folder):
+            logging.warning(f"Folder {folder} does not exist")
+            return jsonify({
+                'success': True,
+                'interviews': [],
+                'count': 0,
+                'message': 'No scheduled interviews found.'
+            })
+        
+        all_files = os.listdir(folder)
+        logging.info(f"Found {len(all_files)} files in {folder}: {all_files}")
+        
+        for filename in all_files:
+            if filename.endswith('.json') and not filename.startswith('summary_'):
+                filepath = os.path.join(folder, filename)
+                logging.info(f"Reading interview file: {filename}")
+                with open(filepath, 'r') as f:
+                    data = json.load(f)
+                    data['filename'] = filename
+                    interviews.append(data)
+        
+        # Sort by start_time (most recent first)
+        interviews.sort(key=lambda x: x.get('start_time', ''), reverse=True)
+        
+        logging.info(f"Returning {len(interviews)} scheduled interviews")
+        
+        return jsonify({
+            'success': True,
+            'count': len(interviews),
+            'interviews': interviews
+        })
+        
+    except Exception as e:
+        logging.error(f"Error fetching scheduled interviews: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/interviews/scheduled/<filename>', methods=['GET'])
+def get_scheduled_interview_file(filename):
+    """Fetch a single scheduled interview JSON"""
+    try:
+        folder = 'scheduled_interviews'
+        safe_name = secure_filename(filename)
+        filepath = os.path.join(folder, safe_name)
+        
+        if not os.path.exists(filepath):
+            return jsonify({'success': False, 'error': 'Interview record not found'}), 404
+        
+        with open(filepath, 'r') as f:
+            data = json.load(f)
+        
+        return jsonify({'success': True, 'data': data})
+        
+    except Exception as e:
+        logging.error(f"Error fetching scheduled interview file: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
 @app.route('/api/interviews/schedule', methods=['POST'])
 def schedule_interviews():
     """Schedule interviews for all candidates"""
@@ -487,6 +552,7 @@ def schedule_interviews():
         logging.error(f"Error scheduling interviews: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
+
 @app.route('/api/interviews/schedule-single', methods=['POST'])
 def schedule_single_interview():
     """Schedule interview for a single candidate"""
@@ -549,6 +615,12 @@ def get_statistics():
         parsed_count = len([f for f in os.listdir('parsed_json') if f.endswith('.json')]) if os.path.exists('parsed_json') else 0
         enriched_count = len([f for f in os.listdir('enriched_json') if f.endswith('.json')]) if os.path.exists('enriched_json') else 0
         
+        # Count scheduled interviews
+        scheduled_count = 0
+        if os.path.exists('scheduled_interviews'):
+            scheduled_count = len([f for f in os.listdir('scheduled_interviews') 
+                                 if f.endswith('.json') and not f.startswith('summary_')])
+        
         # Get skill distribution
         candidates = get_all_candidates()
         all_skills = {}
@@ -564,6 +636,7 @@ def get_statistics():
                 'total_resumes': resumes_count,
                 'parsed_resumes': parsed_count,
                 'enriched_candidates': enriched_count,
+                'scheduled_interviews': scheduled_count,
                 'top_skills': [{'skill': s[0], 'count': s[1]} for s in top_skills]
             }
         })
@@ -581,6 +654,7 @@ if __name__ == '__main__':
     os.makedirs('parsed_text', exist_ok=True)
     os.makedirs('parsed_json', exist_ok=True)
     os.makedirs('enriched_json', exist_ok=True)
+    os.makedirs('scheduled_interviews', exist_ok=True)
     
     logging.info("🚀 Starting AI Recruiter API Server...")
     logging.info("📍 Server running at http://localhost:5000")
