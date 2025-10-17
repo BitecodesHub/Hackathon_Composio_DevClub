@@ -8,28 +8,14 @@ import {
   ExternalLink,
   Calendar,
   Star,
-  Clock
+  Clock,
+  Download
 } from "lucide-react";
+import ResumeViewer from "./ResumeViewer";
 
-interface CandidateCardProps {
-  candidate: {
-    id: string;
-    name: string;
-    email: string;
-    phone: string;
-    position: string;
-    stage: string;
-    score: number;
-    skills: string[];
-    experience: string;
-    education: string;
-    linkedinUrl?: string;
-    resumeDate: string;
-    status: string;
-  };
-}
+const API_BASE = "http://localhost:5000/api";
 
-const stageColors: Record<string, { bg: string; text: string; label: string }> = {
+const stageColors = {
   new: { bg: "bg-blue-500/10 text-blue-600 dark:text-blue-400", text: "text-blue-600", label: "New Application" },
   screening: { bg: "bg-purple-500/10 text-purple-600 dark:text-purple-400", text: "text-purple-600", label: "Screening" },
   interview: { bg: "bg-amber-500/10 text-amber-600 dark:text-amber-400", text: "text-amber-600", label: "Interview Stage" },
@@ -37,8 +23,44 @@ const stageColors: Record<string, { bg: string; text: string; label: string }> =
   rejected: { bg: "bg-red-500/10 text-red-600 dark:text-red-400", text: "text-red-600", label: "Not Selected" }
 };
 
-const CandidateCard = ({ candidate }: CandidateCardProps) => {
-  const stageInfo = stageColors[candidate.stage] || stageColors.new;
+const CandidateCard = ({ candidate }) => {
+  // Normalize candidate data (handles both formats from backend)
+  const normalizedCandidate = {
+    id: candidate.id || candidate.candidate_id,
+    name: candidate.full_name || candidate.name,
+    email: candidate.email,
+    phone: candidate.phone || candidate.contact_number,
+    position: candidate.position || candidate.desired_position || "Not specified",
+    stage: candidate.stage || "new",
+    score: candidate.score || candidate.match_score || 0,
+    skills: candidate.skills || [],
+    experience: candidate.experience || candidate.total_experience || "Not specified",
+    education: candidate.education || (candidate.education_details?.[0]?.degree) || "Not specified",
+    linkedinUrl: candidate.linkedin_url || candidate.linkedinUrl,
+    resumeDate: candidate.resumeDate || candidate.created_at || new Date().toLocaleDateString(),
+    status: candidate.status || "active",
+    filename: candidate.filename,
+    resume_filename: candidate.resume_filename
+  };
+
+  const stageInfo = stageColors[normalizedCandidate.stage] || stageColors.new;
+
+  const handleScheduleInterview = () => {
+    // TODO: Implement interview scheduling
+    console.log("Schedule interview for:", normalizedCandidate.name);
+  };
+
+  const handleSendEmail = () => {
+    window.location.href = `mailto:${normalizedCandidate.email}`;
+  };
+
+  const handleDownloadResume = () => {
+    const filename = normalizedCandidate.resume_filename || 
+                    normalizedCandidate.filename?.replace('.json', '.pdf') || 
+                    `${normalizedCandidate.id}.pdf`;
+    const url = `${API_BASE}/resumes/download/${filename}`;
+    window.open(url, '_blank');
+  };
 
   return (
     <Card className="p-6 hover:shadow-lg transition-all duration-200 border-l-4 border-l-primary">
@@ -48,35 +70,50 @@ const CandidateCard = ({ candidate }: CandidateCardProps) => {
           <div className="flex items-start justify-between">
             <div>
               <div className="flex items-center gap-3 mb-2">
-                <h3 className="text-xl font-semibold text-foreground">{candidate.name}</h3>
+                <h3 className="text-xl font-semibold text-foreground">
+                  {normalizedCandidate.name}
+                </h3>
                 <Badge className={stageInfo.bg}>{stageInfo.label}</Badge>
               </div>
-              <p className="text-muted-foreground font-medium">{candidate.position}</p>
+              <p className="text-muted-foreground font-medium">
+                {normalizedCandidate.position}
+              </p>
             </div>
-            <div className="flex items-center gap-2">
-              <div className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-amber-500/10">
-                <Star className="h-4 w-4 fill-amber-500 text-amber-500" />
-                <span className="font-bold text-amber-600 dark:text-amber-400">{candidate.score}</span>
+            {normalizedCandidate.score > 0 && (
+              <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-amber-500/10">
+                  <Star className="h-4 w-4 fill-amber-500 text-amber-500" />
+                  <span className="font-bold text-amber-600 dark:text-amber-400">
+                    {normalizedCandidate.score}
+                  </span>
+                </div>
               </div>
-            </div>
+            )}
           </div>
 
           <div className="grid gap-2 text-sm">
-            <div className="flex items-center gap-2 text-muted-foreground">
-              <Mail className="h-4 w-4" />
-              <a href={`mailto:${candidate.email}`} className="hover:text-primary transition-colors">
-                {candidate.email}
-              </a>
-            </div>
-            <div className="flex items-center gap-2 text-muted-foreground">
-              <Phone className="h-4 w-4" />
-              <span>{candidate.phone}</span>
-            </div>
-            {candidate.linkedinUrl && (
+            {normalizedCandidate.email && (
               <div className="flex items-center gap-2 text-muted-foreground">
-                <Linkedin className="h-4 w-4" />
+                <Mail className="h-4 w-4 flex-shrink-0" />
                 <a 
-                  href={candidate.linkedinUrl} 
+                  href={`mailto:${normalizedCandidate.email}`} 
+                  className="hover:text-primary transition-colors truncate"
+                >
+                  {normalizedCandidate.email}
+                </a>
+              </div>
+            )}
+            {normalizedCandidate.phone && (
+              <div className="flex items-center gap-2 text-muted-foreground">
+                <Phone className="h-4 w-4 flex-shrink-0" />
+                <span>{normalizedCandidate.phone}</span>
+              </div>
+            )}
+            {normalizedCandidate.linkedinUrl && (
+              <div className="flex items-center gap-2 text-muted-foreground">
+                <Linkedin className="h-4 w-4 flex-shrink-0" />
+                <a 
+                  href={normalizedCandidate.linkedinUrl} 
                   target="_blank" 
                   rel="noopener noreferrer"
                   className="hover:text-primary transition-colors flex items-center gap-1"
@@ -88,37 +125,71 @@ const CandidateCard = ({ candidate }: CandidateCardProps) => {
             )}
           </div>
 
-          <div className="flex flex-wrap gap-2">
-            {candidate.skills.map((skill, index) => (
-              <Badge key={index} variant="secondary" className="px-3 py-1">
-                {skill}
-              </Badge>
-            ))}
-          </div>
+          {normalizedCandidate.skills.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {normalizedCandidate.skills.slice(0, 8).map((skill, index) => (
+                <Badge key={index} variant="secondary" className="px-3 py-1">
+                  {skill}
+                </Badge>
+              ))}
+              {normalizedCandidate.skills.length > 8 && (
+                <Badge variant="outline" className="px-3 py-1">
+                  +{normalizedCandidate.skills.length - 8} more
+                </Badge>
+              )}
+            </div>
+          )}
 
           <div className="pt-2 space-y-1 text-sm text-muted-foreground">
-            <p><strong>Experience:</strong> {candidate.experience}</p>
-            <p><strong>Education:</strong> {candidate.education}</p>
+            <p>
+              <strong className="text-foreground">Experience:</strong>{" "}
+              {normalizedCandidate.experience}
+            </p>
+            <p>
+              <strong className="text-foreground">Education:</strong>{" "}
+              {normalizedCandidate.education}
+            </p>
           </div>
         </div>
 
         {/* Right Section: Actions */}
         <div className="lg:w-48 flex flex-col gap-2">
-          <Button variant="default" size="sm" className="w-full gap-2">
+          <Button 
+            onClick={handleScheduleInterview}
+            variant="default" 
+            size="sm" 
+            className="w-full gap-2"
+          >
             <Calendar className="h-4 w-4" />
             Schedule Interview
           </Button>
-          <Button variant="outline" size="sm" className="w-full gap-2">
+          <Button 
+            onClick={handleSendEmail}
+            variant="outline" 
+            size="sm" 
+            className="w-full gap-2"
+          >
             <Mail className="h-4 w-4" />
             Send Email
           </Button>
-          <Button variant="outline" size="sm" className="w-full gap-2">
-            View Resume
+          
+          {/* Resume Viewer Integration */}
+          <ResumeViewer candidate={normalizedCandidate} variant="button" />
+          
+          <Button 
+            onClick={handleDownloadResume}
+            variant="outline" 
+            size="sm" 
+            className="w-full gap-2"
+          >
+            <Download className="h-4 w-4" />
+            Download Resume
           </Button>
+          
           <div className="mt-auto pt-4 border-t">
             <div className="flex items-center gap-2 text-xs text-muted-foreground">
-              <Clock className="h-3 w-3" />
-              <span>Applied {candidate.resumeDate}</span>
+              <Clock className="h-3 w-3 flex-shrink-0" />
+              <span>Applied {normalizedCandidate.resumeDate}</span>
             </div>
           </div>
         </div>
