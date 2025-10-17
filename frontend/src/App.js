@@ -13,6 +13,7 @@ import Candidates from "./pages/Candidates";
 import Dashboard from "./pages/Dashboard";
 import Jobs from "./pages/Jobs";
 import Settings from "./pages/Settings";
+import RecruiterCopilot from "./pages/RecruiterCopilot";
 
 const App = () => {
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -47,6 +48,7 @@ const App = () => {
           <Box sx={{ flex: 1, overflow: "auto", p: 4 }}>
             <Routes>
               <Route path="/" element={<Dashboard />} />
+               <Route path="/recruitercopilot" element={<RecruiterCopilot />} />
               <Route path="/candidates" element={<Candidates />} />
               <Route path="/jobs" element={<Jobs />} />
               <Route path="/analytics" element={<Analytics />} />

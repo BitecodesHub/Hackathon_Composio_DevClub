@@ -19,6 +19,7 @@ export default function Sidebar({ open = true, setOpen = () => {} }) {
   const location = useLocation();
 
   const menuItems = [
+  { text: "RecruiterCopilot", icon: <PeopleIcon />, path: "/recruitercopilot" },
   { text: "Dashboard", icon: <DashboardIcon />, path: "/" },
   { text: "Candidates", icon: <PeopleIcon />, path: "/candidates" },
   { text: "Jobs", icon: <WorkIcon />, path: "/jobs" },
