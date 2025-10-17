@@ -2,13 +2,13 @@ import { Box, CssBaseline } from "@mui/material";
 import { useState } from "react";
 import { Route, BrowserRouter as Router, Routes } from "react-router-dom";
 
-// Components
+
 import AIChatPanel from "./components/AIChatPanel";
 import DashboardHeader from "./components/DashboardHeader";
 import Sidebar from "./components/Sidebar";
 
-// Pages
 import Analytics from "./pages/Analytics";
+import Calendar from "./pages/Calendar";
 import Candidates from "./pages/Candidates";
 import Dashboard from "./pages/Dashboard";
 import Jobs from "./pages/Jobs";
@@ -50,8 +50,10 @@ const App = () => {
               <Route path="/candidates" element={<Candidates />} />
               <Route path="/jobs" element={<Jobs />} />
               <Route path="/analytics" element={<Analytics />} />
+              <Route path="/calendar" element={<Calendar />} /> 
               <Route path="/settings" element={<Settings />} />
             </Routes>
+
           </Box>
         </Box>
 
@@ -64,3 +66,4 @@ const App = () => {
 };
 
 export default App;
+
