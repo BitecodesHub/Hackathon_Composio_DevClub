@@ -1,6 +1,8 @@
+# schedule_interviews.py
 import os
 import json
 import logging
+import hashlib
 from datetime import datetime, timedelta, timezone
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -21,10 +23,41 @@ SCOPES = ['https://www.googleapis.com/auth/calendar.events']
 CREDENTIALS_FILE = "credentials.json"
 TOKEN_FILE = "token.json"
 SCHEDULE_LOG_FOLDER = "scheduled_interviews"
+SCHEDULED_CANDIDATES_FILE = 'scheduled_candidates.json'
 
-# --------------------------
-# Utility
-# --------------------------
+def load_scheduled_candidates():
+    """Load hashes of already scheduled candidates"""
+    if os.path.exists(SCHEDULED_CANDIDATES_FILE):
+        try:
+            with open(SCHEDULED_CANDIDATES_FILE, 'r') as f:
+                return set(json.load(f))
+        except:
+            return set()
+    return set()
+
+def save_scheduled_candidate(candidate_data):
+    """Save hash of scheduled candidate"""
+    scheduled = load_scheduled_candidates()
+    
+    candidate_id = create_candidate_id(candidate_data)
+    scheduled.add(candidate_id)
+    
+    with open(SCHEDULED_CANDIDATES_FILE, 'w') as f:
+        json.dump(list(scheduled), f)
+
+def create_candidate_id(candidate_data):
+    """Create unique ID based on candidate's core information"""
+    key_fields = [
+        candidate_data.get('full_name', ''),
+        candidate_data.get('email', ''),
+        candidate_data.get('phone', ''),
+        ' '.join(candidate_data.get('skills', [])),
+        candidate_data.get('education', '')
+    ]
+    
+    key_string = '|'.join(str(field) for field in key_fields).lower().strip()
+    return hashlib.md5(key_string.encode('utf-8')).hexdigest()
+
 def ensure_folder(folder):
     os.makedirs(folder, exist_ok=True)
 
@@ -40,9 +73,6 @@ def get_calendar_service():
     service = build('calendar', 'v3', credentials=creds)
     return service
 
-# --------------------------
-# Schedule interviews
-# --------------------------
 def schedule_interview(service, candidate, start_time, calendar_id='primary', duration_minutes=30):
     name = candidate.get("full_name", "Unknown")
     email = candidate.get("email")
@@ -88,11 +118,13 @@ def schedule_interview(service, candidate, start_time, calendar_id='primary', du
     with open(filepath, "w") as f:
         json.dump(schedule_record, f, indent=2)
 
+    # Mark candidate as scheduled
+    save_scheduled_candidate(candidate)
+
     logging.info(f"✅ Scheduled interview for {name} ({email}) at {start_time.strftime('%Y-%m-%d %H:%M')} UTC")
     logging.info(f"🗓️  Saved to {filepath}")
     
     return end_time
-
 
 def process_all_candidates(
     input_folder="enriched_json",
@@ -104,19 +136,13 @@ def process_all_candidates(
     skip_weekends=True
 ):
     """
-    Schedule interviews with proper spacing and business hours logic.
-    
-    Args:
-        input_folder: Folder containing candidate JSON files
-        start_date: Date to start scheduling (defaults to tomorrow)
-        start_hour: Hour to start interviews each day (24-hour format)
-        duration_minutes: Interview duration
-        buffer_minutes: Buffer time between interviews
-        work_hours: Tuple of (start_hour, end_hour) for business hours
-        skip_weekends: Whether to skip Saturday and Sunday
+    Schedule interviews with candidate-level deduplication
     """
     service = get_calendar_service()
     ensure_folder(SCHEDULE_LOG_FOLDER)
+    
+    # Load already scheduled candidates
+    scheduled_candidates = load_scheduled_candidates()
     
     # Initialize start time (timezone-aware)
     if start_date is None:
@@ -136,12 +162,22 @@ def process_all_candidates(
     
     scheduled_count = 0
     skipped_count = 0
+    duplicate_count = 0
     
     # Process all candidates
     for filename in sorted(os.listdir(input_folder)):
         if filename.endswith(".json"):
             with open(os.path.join(input_folder, filename), "r") as f:
                 candidate = json.load(f)
+            
+            candidate_name = candidate.get("full_name", "Unknown")
+            candidate_id = create_candidate_id(candidate)
+            
+            # Check if candidate already scheduled
+            if candidate_id in scheduled_candidates:
+                logging.info(f"🔄 Skipping already scheduled candidate: {candidate_name}")
+                duplicate_count += 1
+                continue
             
             # Check if we need to move to next day
             interview_end_hour = start_time.hour + (start_time.minute + duration_minutes) / 60
@@ -169,7 +205,8 @@ def process_all_candidates(
     summary = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "scheduled_count": scheduled_count,
-        "skipped_count": skipped_count
+        "skipped_count": skipped_count,
+        "duplicate_count": duplicate_count
     }
 
     # Save a summary file for the run
@@ -177,7 +214,8 @@ def process_all_candidates(
     with open(summary_file, "w") as f:
         json.dump(summary, f, indent=2)
     
-    logging.info(f"✅ Scheduling complete! {scheduled_count} interviews scheduled, {skipped_count} skipped.")
+    logging.info(f"✅ Scheduling complete!")
+    logging.info(f"📊 Scheduled: {scheduled_count}, Skipped: {skipped_count}, Duplicates: {duplicate_count}")
     logging.info(f"🗂️  Summary saved to {summary_file}")
 
 # --------------------------
@@ -193,4 +231,4 @@ if __name__ == "__main__":
         skip_weekends=True        # Skip Saturday/Sunday
     )
     
-    logging.info("✅ All interviews scheduled and stored in /scheduled_interviews/")
+    logging.info("✅ Interview scheduling completed!")

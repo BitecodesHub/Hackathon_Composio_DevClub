@@ -1,0 +1,131 @@
+2025-10-18 15:36:01,524 [INFO] 🎯 STARTING RESUME PROCESSING PIPELINE
+2025-10-18 15:36:01,524 [INFO] 📅 Started at: 2025-10-18 15:36:01.524731
+2025-10-18 15:36:01,524 [INFO] 🔍 Duplicate prevention: ENABLED at all stages
+2025-10-18 15:36:01,524 [INFO] 
+================================================================================
+2025-10-18 15:36:01,524 [INFO] 🚀 STARTING: 1. Fetch resumes from Gmail
+2025-10-18 15:36:01,524 [INFO] ================================================================================
+2025-10-18 15:36:02,279 [INFO] ✅ COMPLETED: 1. Fetch resumes from Gmail
+2025-10-18 15:36:02,279 [INFO] 
+================================================================================
+2025-10-18 15:36:02,279 [INFO] 🚀 STARTING: 2. Parse resume files to text
+2025-10-18 15:36:02,279 [INFO] ================================================================================
+2025-10-18 15:36:02,375 [INFO] ✅ COMPLETED: 2. Parse resume files to text
+2025-10-18 15:36:02,375 [INFO] 
+================================================================================
+2025-10-18 15:36:02,375 [INFO] 🚀 STARTING: 3. Extract structured data with Gemini
+2025-10-18 15:36:02,375 [INFO] ================================================================================
+2025-10-18 15:36:02,722 [INFO] ✅ COMPLETED: 3. Extract structured data with Gemini
+2025-10-18 15:36:02,722 [INFO] 
+================================================================================
+2025-10-18 15:36:02,722 [INFO] 🚀 STARTING: 4. Enrich candidate data
+2025-10-18 15:36:02,722 [INFO] ================================================================================
+2025-10-18 15:36:02,756 [INFO] ✅ COMPLETED: 4. Enrich candidate data
+2025-10-18 15:36:02,756 [INFO] 
+================================================================================
+2025-10-18 15:36:02,756 [INFO] 🚀 STARTING: 5. Schedule interviews
+2025-10-18 15:36:02,756 [INFO] ================================================================================
+2025-10-18 15:36:02,933 [INFO] ✅ COMPLETED: 5. Schedule interviews
+2025-10-18 15:36:02,933 [INFO] 
+================================================================================
+2025-10-18 15:36:02,933 [INFO] 📊 PIPELINE EXECUTION SUMMARY
+2025-10-18 15:36:02,933 [INFO] ================================================================================
+2025-10-18 15:36:02,934 [INFO] ✅ Completed stages: 5/5
+2025-10-18 15:36:02,934 [INFO] ⏱️ Total duration: 0:00:01.409207
+2025-10-18 15:36:02,934 [INFO] 🏁 Finished at: 2025-10-18 15:36:02.933938
+2025-10-18 15:36:02,934 [INFO] 🎉 ALL STAGES COMPLETED SUCCESSFULLY!
+2025-10-18 15:37:38,559 [INFO] 🎯 STARTING RESUME PROCESSING PIPELINE
+2025-10-18 15:37:38,560 [INFO] 📅 Started at: 2025-10-18 15:37:38.559968
+2025-10-18 15:37:38,560 [INFO] 🔍 Duplicate prevention: ENABLED at all stages
+2025-10-18 15:37:38,560 [INFO] 
+================================================================================
+2025-10-18 15:37:38,560 [INFO] 🚀 STARTING: 1. Fetch resumes from Gmail
+2025-10-18 15:37:38,560 [INFO] ================================================================================
+2025-10-18 15:38:38,455 [INFO] ✅ COMPLETED: 1. Fetch resumes from Gmail
+2025-10-18 15:38:38,455 [INFO] Output: Please visit this URL to authorize this application: https://accounts.google.com/o/oauth2/auth?response_type=code&client_id=915660634853-c21c29cgiudqcv8qfcjbmef62vvl26sc.apps.googleusercontent.com&redirect_uri=http%3A%2F%2Flocalhost%3A65523%2F&scope=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fgmail.readonly&state=xAyESZHiOSZwlr2IXg94w0fA7yoUqF&access_type=offline
+
+2025-10-18 15:38:38,455 [INFO] 
+================================================================================
+2025-10-18 15:38:38,455 [INFO] 🚀 STARTING: 2. Parse resume files to text
+2025-10-18 15:38:38,455 [INFO] ================================================================================
+2025-10-18 15:38:38,562 [INFO] ✅ COMPLETED: 2. Parse resume files to text
+2025-10-18 15:38:38,562 [INFO] 
+================================================================================
+2025-10-18 15:38:38,562 [INFO] 🚀 STARTING: 3. Extract structured data with Gemini
+2025-10-18 15:38:38,562 [INFO] ================================================================================
+2025-10-18 15:38:55,832 [INFO] ✅ COMPLETED: 3. Extract structured data with Gemini
+2025-10-18 15:38:55,832 [INFO] 
+================================================================================
+2025-10-18 15:38:55,832 [INFO] 🚀 STARTING: 4. Enrich candidate data
+2025-10-18 15:38:55,833 [INFO] ================================================================================
+2025-10-18 15:38:55,891 [INFO] ✅ COMPLETED: 4. Enrich candidate data
+2025-10-18 15:38:55,891 [INFO] 
+================================================================================
+2025-10-18 15:38:55,891 [INFO] 🚀 STARTING: 5. Schedule interviews
+2025-10-18 15:38:55,891 [INFO] ================================================================================
+2025-10-18 15:38:56,083 [ERROR] ❌ FAILED: 5. Schedule interviews
+2025-10-18 15:38:56,083 [ERROR] Error: 2025-10-18 15:38:56,051 [INFO] Starting to schedule interviews...
+2025-10-18 15:38:56,053 [INFO] file_cache is only supported with oauth2client<4.0.0
+Traceback (most recent call last):
+  File "/Users/yashcomputers/Desktop/hackathon/Hackathon_Composio_DevClub copy/schedule_interviews.py", line 226, in <module>
+    process_all_candidates(
+    ~~~~~~~~~~~~~~~~~~~~~~^
+        duration_minutes=45,      # 45-minute interviews
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<2 lines>...
+        skip_weekends=True        # Skip Saturday/Sunday
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/Users/yashcomputers/Desktop/hackathon/Hackathon_Composio_DevClub copy/schedule_interviews.py", line 173, in process_all_candidates
+    candidate_id = create_candidate_id(candidate)
+  File "/Users/yashcomputers/Desktop/hackathon/Hackathon_Composio_DevClub copy/schedule_interviews.py", line 58, in create_candidate_id
+    return hashlib.md5(key_string.encode('utf-8')).hexdigest()
+           ^^^^^^^
+NameError: name 'hashlib' is not defined. Did you forget to import 'hashlib'?
+
+2025-10-18 15:38:56,083 [ERROR] ⏹️ Pipeline stopped at: 5. Schedule interviews
+2025-10-18 15:38:56,083 [INFO] 
+================================================================================
+2025-10-18 15:38:56,083 [INFO] 📊 PIPELINE EXECUTION SUMMARY
+2025-10-18 15:38:56,083 [INFO] ================================================================================
+2025-10-18 15:38:56,083 [INFO] ✅ Completed stages: 4/5
+2025-10-18 15:38:56,083 [INFO] ⏱️ Total duration: 0:01:17.523381
+2025-10-18 15:38:56,083 [INFO] 🏁 Finished at: 2025-10-18 15:38:56.083349
+2025-10-18 15:38:56,083 [WARNING] ⚠️ Pipeline incomplete: 4/5 stages completed
+2025-10-18 15:40:54,870 [INFO] 🎯 STARTING RESUME PROCESSING PIPELINE
+2025-10-18 15:40:54,870 [INFO] 📅 Started at: 2025-10-18 15:40:54.870708
+2025-10-18 15:40:54,870 [INFO] 🔍 Duplicate prevention: ENABLED at all stages
+2025-10-18 15:40:54,870 [INFO] 
+================================================================================
+2025-10-18 15:40:54,870 [INFO] 🚀 STARTING: 1. Fetch resumes from Gmail
+2025-10-18 15:40:54,870 [INFO] ================================================================================
+2025-10-18 15:40:55,498 [INFO] ✅ COMPLETED: 1. Fetch resumes from Gmail
+2025-10-18 15:40:55,498 [INFO] 
+================================================================================
+2025-10-18 15:40:55,498 [INFO] 🚀 STARTING: 2. Parse resume files to text
+2025-10-18 15:40:55,498 [INFO] ================================================================================
+2025-10-18 15:40:55,600 [INFO] ✅ COMPLETED: 2. Parse resume files to text
+2025-10-18 15:40:55,600 [INFO] 
+================================================================================
+2025-10-18 15:40:55,600 [INFO] 🚀 STARTING: 3. Extract structured data with Gemini
+2025-10-18 15:40:55,600 [INFO] ================================================================================
+2025-10-18 15:41:11,544 [INFO] ✅ COMPLETED: 3. Extract structured data with Gemini
+2025-10-18 15:41:11,544 [INFO] 
+================================================================================
+2025-10-18 15:41:11,544 [INFO] 🚀 STARTING: 4. Enrich candidate data
+2025-10-18 15:41:11,544 [INFO] ================================================================================
+2025-10-18 15:41:11,582 [INFO] ✅ COMPLETED: 4. Enrich candidate data
+2025-10-18 15:41:11,582 [INFO] 
+================================================================================
+2025-10-18 15:41:11,582 [INFO] 🚀 STARTING: 5. Schedule interviews
+2025-10-18 15:41:11,582 [INFO] ================================================================================
+2025-10-18 15:41:12,773 [INFO] ✅ COMPLETED: 5. Schedule interviews
+2025-10-18 15:41:12,773 [INFO] 
+================================================================================
+2025-10-18 15:41:12,773 [INFO] 📊 PIPELINE EXECUTION SUMMARY
+2025-10-18 15:41:12,773 [INFO] ================================================================================
+2025-10-18 15:41:12,773 [INFO] ✅ Completed stages: 5/5
+2025-10-18 15:41:12,773 [INFO] ⏱️ Total duration: 0:00:17.902948
+2025-10-18 15:41:12,773 [INFO] 🏁 Finished at: 2025-10-18 15:41:12.773656
+2025-10-18 15:41:12,773 [INFO] 🎉 ALL STAGES COMPLETED SUCCESSFULLY!

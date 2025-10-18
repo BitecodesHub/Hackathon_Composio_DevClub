@@ -1,6 +1,8 @@
 # parse_resumes.py
 import os
 import logging
+import hashlib
+import json
 from PyPDF2 import PdfReader
 import docx2txt
 
@@ -10,15 +12,34 @@ logging.basicConfig(
     level=logging.INFO
 )
 
+PROCESSED_HASHES_FILE = 'processed_text_hashes.json'
+
+def load_processed_text_hashes():
+    """Load hashes of already processed text content"""
+    if os.path.exists(PROCESSED_HASHES_FILE):
+        try:
+            with open(PROCESSED_HASHES_FILE, 'r') as f:
+                return set(json.load(f))
+        except:
+            return set()
+    return set()
+
+def save_text_hash(text_hash):
+    """Save hash of processed text content"""
+    processed = load_processed_text_hashes()
+    processed.add(text_hash)
+    with open(PROCESSED_HASHES_FILE, 'w') as f:
+        json.dump(list(processed), f)
+
+def calculate_text_hash(text):
+    """Calculate hash of text content for duplicate detection"""
+    # Normalize text by removing extra whitespace and converting to lowercase
+    normalized_text = ' '.join(text.split()).lower().strip()
+    return hashlib.md5(normalized_text.encode('utf-8')).hexdigest()
+
 def extract_text_from_file(file_path):
     """
     Extract text from PDF or DOCX file with improved error handling
-    
-    Args:
-        file_path: Path to the file to extract text from
-        
-    Returns:
-        str: Extracted text content
     """
     ext = os.path.splitext(file_path)[1].lower()
     text = ""
@@ -62,14 +83,7 @@ def extract_text_from_file(file_path):
 
 def parse_all_resumes(input_folder="resumes", output_folder="parsed_text"):
     """
-    Parse all resumes in folder and save as .txt files
-    
-    Args:
-        input_folder: Folder containing resume files
-        output_folder: Folder to save extracted text
-        
-    Returns:
-        dict: Summary of parsing results
+    Parse all resumes with duplicate content detection
     """
     if not os.path.exists(output_folder):
         os.makedirs(output_folder)
@@ -77,9 +91,11 @@ def parse_all_resumes(input_folder="resumes", output_folder="parsed_text"):
     
     if not os.path.exists(input_folder):
         logging.error(f"❌ Input folder not found: {input_folder}")
-        return {'success': 0, 'failed': 0, 'skipped': 0}
+        return {'success': 0, 'failed': 0, 'skipped': 0, 'duplicates': 0}
     
-    results = {'success': 0, 'failed': 0, 'skipped': 0}
+    # Load existing text hashes
+    existing_hashes = load_processed_text_hashes()
+    results = {'success': 0, 'failed': 0, 'skipped': 0, 'duplicates': 0}
     
     files = [f for f in os.listdir(input_folder) if os.path.isfile(os.path.join(input_folder, f))]
     logging.info(f"📊 Found {len(files)} files in {input_folder}")
@@ -100,12 +116,25 @@ def parse_all_resumes(input_folder="resumes", output_folder="parsed_text"):
         text = extract_text_from_file(file_path)
         
         if text.strip():
+            # Calculate content hash
+            text_hash = calculate_text_hash(text)
+            
+            # Check for duplicate content
+            if text_hash in existing_hashes:
+                logging.info(f"🔄 Skipping duplicate content: {filename}")
+                results['duplicates'] += 1
+                continue
+            
             txt_filename = os.path.splitext(filename)[0] + ".txt"
             output_path = os.path.join(output_folder, txt_filename)
             
             try:
                 with open(output_path, "w", encoding="utf-8") as f:
                     f.write(text)
+                
+                # Save hash and mark as processed
+                save_text_hash(text_hash)
+                existing_hashes.add(text_hash)
                 
                 word_count = len(text.split())
                 logging.info(f"✅ Parsed text saved: {txt_filename}")
@@ -124,6 +153,7 @@ def parse_all_resumes(input_folder="resumes", output_folder="parsed_text"):
     logging.info("📊 PARSING SUMMARY")
     logging.info(f"{'='*60}")
     logging.info(f"✅ Success: {results['success']}")
+    logging.info(f"🔄 Duplicates: {results['duplicates']}")
     logging.info(f"❌ Failed: {results['failed']}")
     logging.info(f"⏭️  Skipped: {results['skipped']}")
     logging.info(f"{'='*60}\n")
@@ -137,4 +167,4 @@ if __name__ == "__main__":
     if results['success'] > 0:
         logging.info(f"✅ Step 2 completed! Parsed text is in 'parsed_text/' folder.")
     else:
-        logging.error("❌ No resumes were successfully parsed.")
+        logging.info("ℹ️ No new resumes parsed (all were duplicates or failed)")

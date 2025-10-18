@@ -3,12 +3,48 @@ import os
 import json
 import logging
 import re
+import hashlib
 
 # Setup logging
 logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(message)s",
     level=logging.INFO
 )
+
+ENRICHED_CANDIDATES_FILE = 'enriched_candidates.json'
+
+def load_enriched_candidates():
+    """Load hashes of already enriched candidates"""
+    if os.path.exists(ENRICHED_CANDIDATES_FILE):
+        try:
+            with open(ENRICHED_CANDIDATES_FILE, 'r') as f:
+                return set(json.load(f))
+        except:
+            return set()
+    return set()
+
+def save_enriched_candidate(candidate_data):
+    """Save hash of enriched candidate data"""
+    processed = load_enriched_candidates()
+    
+    candidate_id = create_candidate_id(candidate_data)
+    processed.add(candidate_id)
+    
+    with open(ENRICHED_CANDIDATES_FILE, 'w') as f:
+        json.dump(list(processed), f)
+
+def create_candidate_id(candidate_data):
+    """Create unique ID based on candidate's core information"""
+    key_fields = [
+        candidate_data.get('full_name', ''),
+        candidate_data.get('email', ''),
+        candidate_data.get('phone', ''),
+        ' '.join(candidate_data.get('skills', [])),
+        candidate_data.get('education', '')
+    ]
+    
+    key_string = '|'.join(str(field) for field in key_fields).lower().strip()
+    return hashlib.md5(key_string.encode('utf-8')).hexdigest()
 
 def clean_name_for_url(name):
     """
@@ -26,12 +62,6 @@ def clean_name_for_url(name):
 def generate_linkedin_url(full_name):
     """
     Generate a LinkedIn profile URL from the candidate's name
-    
-    Args:
-        full_name: Candidate's full name
-        
-    Returns:
-        str: LinkedIn profile URL
     """
     cleaned_name = clean_name_for_url(full_name)
     return f"https://www.linkedin.com/in/{cleaned_name}/"
@@ -39,17 +69,6 @@ def generate_linkedin_url(full_name):
 def enrich_candidate(candidate):
     """
     Enrich candidate data with additional information
-    
-    This function adds:
-    - LinkedIn URL (generated from name)
-    - Normalized current_role and current_company
-    - Additional metadata
-    
-    Args:
-        candidate: Dictionary containing candidate information
-        
-    Returns:
-        dict: Enriched candidate data
     """
     # Get full name from various possible fields
     full_name = (
@@ -97,12 +116,6 @@ def enrich_candidate(candidate):
 def calculate_profile_completeness(candidate):
     """
     Calculate how complete a candidate profile is (0-100%)
-    
-    Args:
-        candidate: Candidate dictionary
-        
-    Returns:
-        int: Completeness percentage
     """
     fields = [
         "full_name",
@@ -121,12 +134,6 @@ def calculate_profile_completeness(candidate):
 def estimate_experience(candidate):
     """
     Estimate years of experience based on available data
-    
-    Args:
-        candidate: Candidate dictionary
-        
-    Returns:
-        str: Estimated experience level
     """
     experience_summary = candidate.get("experience_summary", "").lower()
     
@@ -153,14 +160,7 @@ def estimate_experience(candidate):
 
 def process_all_candidates(input_folder="parsed_json", output_folder="enriched_json"):
     """
-    Process all candidates and enrich their data
-    
-    Args:
-        input_folder: Folder containing parsed JSON files
-        output_folder: Folder to save enriched data
-        
-    Returns:
-        dict: Summary of enrichment process
+    Process all candidates with enrichment-level deduplication
     """
     if not os.path.exists(output_folder):
         os.makedirs(output_folder)
@@ -168,9 +168,11 @@ def process_all_candidates(input_folder="parsed_json", output_folder="enriched_j
     
     if not os.path.exists(input_folder):
         logging.error(f"❌ Input folder not found: {input_folder}")
-        return {'success': 0, 'failed': 0}
+        return {'success': 0, 'failed': 0, 'duplicates': 0}
     
-    results = {'success': 0, 'failed': 0}
+    # Load already enriched candidates
+    enriched_candidates = load_enriched_candidates()
+    results = {'success': 0, 'failed': 0, 'duplicates': 0}
     files = [f for f in os.listdir(input_folder) if f.endswith('.json')]
     
     logging.info(f"🔗 Starting LinkedIn enrichment for {len(files)} candidates...")
@@ -186,6 +188,13 @@ def process_all_candidates(input_folder="parsed_json", output_folder="enriched_j
             
             logging.info(f"\nProcessing: {filename}")
             
+            # Check if already enriched
+            candidate_id = create_candidate_id(candidate)
+            if candidate_id in enriched_candidates:
+                logging.info(f"🔄 Skipping already enriched candidate: {candidate.get('full_name', 'Unknown')}")
+                results['duplicates'] += 1
+                continue
+            
             # Enrich candidate data
             enriched_candidate = enrich_candidate(candidate)
             
@@ -193,6 +202,10 @@ def process_all_candidates(input_folder="parsed_json", output_folder="enriched_j
             out_path = os.path.join(output_folder, filename)
             with open(out_path, "w", encoding="utf-8") as out:
                 json.dump(enriched_candidate, out, indent=2, ensure_ascii=False)
+            
+            # Mark as enriched
+            save_enriched_candidate(enriched_candidate)
+            enriched_candidates.add(candidate_id)
             
             logging.info(f"✅ Saved enriched data: {filename}")
             results['success'] += 1
@@ -209,6 +222,7 @@ def process_all_candidates(input_folder="parsed_json", output_folder="enriched_j
     logging.info("📊 ENRICHMENT SUMMARY")
     logging.info(f"{'='*60}")
     logging.info(f"✅ Success: {results['success']}")
+    logging.info(f"🔄 Duplicates: {results['duplicates']}")
     logging.info(f"❌ Failed: {results['failed']}")
     logging.info(f"{'='*60}\n")
     
@@ -222,6 +236,6 @@ if __name__ == "__main__":
     results = process_all_candidates()
     
     if results['success'] > 0:
-        logging.info(f"✅ All candidates enriched! Data saved in 'enriched_json/' folder.")
+        logging.info(f"✅ Enriched {results['success']} new candidates!")
     else:
-        logging.error("❌ No candidates were successfully enriched.")
+        logging.info("ℹ️ No new candidates were enriched (all were duplicates)")

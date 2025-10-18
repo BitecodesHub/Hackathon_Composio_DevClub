@@ -1,18 +1,14 @@
+# app.py
 from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
 import os
 import json
 import logging
+import hashlib
 from datetime import datetime, timedelta, timezone
 from werkzeug.utils import secure_filename
-import base64
-
-# Import our modules
-from fetch_resumes import authenticate_gmail, fetch_resume_emails, download_attachments
-from parse_resumes import extract_text_from_file
-from gemini_parser import parse_resume_text
-from linkedin_enricher import enrich_candidate
-from schedule_interviews import get_calendar_service, schedule_interview
+import subprocess
+import sys
 
 # --------------------------
 # Flask App Setup
@@ -33,10 +29,32 @@ logging.basicConfig(
 )
 
 # --------------------------
+# Import Our Modules (with error handling)
+# --------------------------
+try:
+    from fetch_resumes import authenticate_gmail, fetch_resume_emails, download_attachments
+    from parse_resumes import extract_text_from_file, parse_all_resumes as parse_resumes_module
+    from gemini_parser import parse_resume_text, process_all_resumes as gemini_process_all
+    from linkedin_enricher import enrich_candidate, process_all_candidates as enrich_all_candidates
+    from schedule_interviews import get_calendar_service, schedule_interview, process_all_candidates as schedule_all_candidates
+    MODULES_LOADED = True
+except ImportError as e:
+    logging.warning(f"Some modules failed to load: {e}")
+    MODULES_LOADED = False
+
+# --------------------------
 # Helper Functions
 # --------------------------
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
+def calculate_file_hash(file_path):
+    """Calculate MD5 hash of file content for duplicate detection"""
+    hasher = hashlib.md5()
+    with open(file_path, 'rb') as f:
+        buf = f.read()
+        hasher.update(buf)
+    return hasher.hexdigest()
 
 def get_all_candidates():
     """Get all candidates from enriched_json folder"""
@@ -53,7 +71,7 @@ def get_all_candidates():
     for filename in os.listdir(folder):
         if filename.endswith('.json'):
             try:
-                with open(os.path.join(folder, filename), 'r') as f:
+                with open(os.path.join(folder, filename), 'r', encoding='utf-8') as f:
                     candidate = json.load(f)
                     candidate['id'] = filename.replace('.json', '')
                     candidate['filename'] = filename
@@ -80,6 +98,34 @@ def find_resume_file(candidate_id):
             return f"{candidate_id}.{ext}"
     return None
 
+def run_pipeline_stage(script_name, description):
+    """Run a pipeline stage with proper error handling"""
+    logging.info(f"🚀 Starting: {description}")
+    
+    try:
+        result = subprocess.run([sys.executable, script_name], 
+                              capture_output=True, text=True, check=True)
+        logging.info(f"✅ Completed: {description}")
+        return {
+            'success': True,
+            'description': description,
+            'output': result.stdout[-1000:]  # Last 1000 chars
+        }
+    except subprocess.CalledProcessError as e:
+        logging.error(f"❌ Failed: {description}")
+        return {
+            'success': False,
+            'description': description,
+            'error': e.stderr
+        }
+    except Exception as e:
+        logging.error(f"❌ Unexpected error in {description}: {e}")
+        return {
+            'success': False,
+            'description': description,
+            'error': str(e)
+        }
+
 # --------------------------
 # API Routes
 # --------------------------
@@ -90,8 +136,131 @@ def health_check():
     return jsonify({
         'status': 'healthy',
         'timestamp': datetime.now().isoformat(),
-        'version': '1.0.0'
+        'version': '1.0.0',
+        'modules_loaded': MODULES_LOADED
     })
+
+# --------------------------
+# Pipeline Control Routes
+# --------------------------
+
+@app.route('/api/pipeline/run', methods=['POST'])
+def run_complete_pipeline():
+    """Run the complete resume processing pipeline"""
+    try:
+        start_time = datetime.now()
+        
+        # Pipeline stages
+        stages = [
+            ("fetch_resumes.py", "1. Fetch resumes from Gmail"),
+            ("parse_resumes.py", "2. Parse resume files to text"),
+            ("gemini_parser.py", "3. Extract structured data with Gemini"),
+            ("linkedin_enricher.py", "4. Enrich candidate data"),
+            ("schedule_interviews.py", "5. Schedule interviews")
+        ]
+        
+        results = []
+        for script, description in stages:
+            result = run_pipeline_stage(script, description)
+            results.append(result)
+            
+            if not result['success']:
+                break  # Stop pipeline on failure
+        
+        # Summary
+        success_count = sum(1 for r in results if r['success'])
+        end_time = datetime.now()
+        duration = end_time - start_time
+        
+        return jsonify({
+            'success': True,
+            'results': results,
+            'summary': {
+                'completed_stages': success_count,
+                'total_stages': len(stages),
+                'duration_seconds': duration.total_seconds(),
+                'start_time': start_time.isoformat(),
+                'end_time': end_time.isoformat()
+            }
+        })
+        
+    except Exception as e:
+        logging.error(f"Error running pipeline: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/pipeline/stages', methods=['GET'])
+def get_pipeline_stages():
+    """Get available pipeline stages"""
+    stages = [
+        {
+            'id': 'fetch',
+            'name': 'Fetch Resumes',
+            'description': 'Download resumes from Gmail',
+            'script': 'fetch_resumes.py'
+        },
+        {
+            'id': 'parse',
+            'name': 'Parse Resumes',
+            'description': 'Extract text from resume files',
+            'script': 'parse_resumes.py'
+        },
+        {
+            'id': 'gemini',
+            'name': 'AI Parsing',
+            'description': 'Extract structured data using Gemini AI',
+            'script': 'gemini_parser.py'
+        },
+        {
+            'id': 'enrich',
+            'name': 'Enrich Data',
+            'description': 'Add LinkedIn URLs and additional info',
+            'script': 'linkedin_enricher.py'
+        },
+        {
+            'id': 'schedule',
+            'name': 'Schedule Interviews',
+            'description': 'Schedule interviews in Google Calendar',
+            'script': 'schedule_interviews.py'
+        }
+    ]
+    
+    return jsonify({
+        'success': True,
+        'stages': stages
+    })
+
+@app.route('/api/pipeline/run-stage', methods=['POST'])
+def run_single_stage():
+    """Run a single pipeline stage"""
+    try:
+        data = request.json
+        stage_id = data.get('stage_id')
+        
+        stage_map = {
+            'fetch': ('fetch_resumes.py', 'Fetch resumes from Gmail'),
+            'parse': ('parse_resumes.py', 'Parse resume files to text'),
+            'gemini': ('gemini_parser.py', 'Extract structured data with Gemini'),
+            'enrich': ('linkedin_enricher.py', 'Enrich candidate data'),
+            'schedule': ('schedule_interviews.py', 'Schedule interviews')
+        }
+        
+        if stage_id not in stage_map:
+            return jsonify({
+                'success': False,
+                'error': f'Invalid stage ID: {stage_id}'
+            }), 400
+        
+        script, description = stage_map[stage_id]
+        result = run_pipeline_stage(script, description)
+        
+        return jsonify({
+            'success': result['success'],
+            'result': result
+        })
+        
+    except Exception as e:
+        logging.error(f"Error running pipeline stage: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 # --------------------------
 # Gmail Integration Routes
@@ -100,8 +269,11 @@ def health_check():
 @app.route('/api/gmail/fetch', methods=['POST'])
 def fetch_from_gmail():
     """Fetch resumes from Gmail"""
+    if not MODULES_LOADED:
+        return jsonify({'success': False, 'error': 'Gmail module not loaded'}), 500
+    
     try:
-        data = request.json
+        data = request.json or {}
         query = data.get('query', 'has:attachment')
         
         logging.info("Authenticating with Gmail...")
@@ -110,13 +282,20 @@ def fetch_from_gmail():
         logging.info(f"Fetching emails with query: {query}")
         emails = fetch_resume_emails(service, query)
         
+        if not emails:
+            return jsonify({
+                'success': True,
+                'message': 'No new emails found with attachments',
+                'count': 0
+            })
+        
         logging.info("Downloading attachments...")
-        download_attachments(service, emails)
+        results = download_attachments(service, emails)
         
         return jsonify({
             'success': True,
-            'message': f'Successfully fetched {len(emails)} emails',
-            'count': len(emails)
+            'message': f'Successfully processed {len(emails)} emails',
+            'results': results
         })
     except Exception as e:
         logging.error(f"Error fetching from Gmail: {e}")
@@ -131,7 +310,7 @@ def fetch_from_gmail():
 
 @app.route('/api/resumes/upload', methods=['POST'])
 def upload_resume():
-    """Upload a resume file"""
+    """Upload a resume file with duplicate detection"""
     try:
         if 'file' not in request.files:
             return jsonify({'success': False, 'error': 'No file provided'}), 400
@@ -148,12 +327,37 @@ def upload_resume():
             # Create folder if it doesn't exist
             os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
             
+            # Check for duplicate file content
+            file_data = file.read()
+            file_hash = hashlib.md5(file_data).hexdigest()
+            
+            # Check existing files for duplicates
+            existing_hashes = set()
+            if os.path.exists(UPLOAD_FOLDER):
+                for existing_file in os.listdir(UPLOAD_FOLDER):
+                    if allowed_file(existing_file):
+                        existing_path = os.path.join(UPLOAD_FOLDER, existing_file)
+                        try:
+                            existing_hash = calculate_file_hash(existing_path)
+                            existing_hashes.add(existing_hash)
+                        except Exception as e:
+                            logging.warning(f"Could not calculate hash for {existing_file}: {e}")
+            
+            if file_hash in existing_hashes:
+                return jsonify({
+                    'success': False,
+                    'error': 'Duplicate resume file detected'
+                }), 409  # Conflict status code
+            
+            # Save the file
+            file.seek(0)  # Reset file pointer
             file.save(filepath)
             
             return jsonify({
                 'success': True,
                 'message': 'File uploaded successfully',
-                'filename': filename
+                'filename': filename,
+                'file_hash': file_hash
             })
         else:
             return jsonify({
@@ -180,7 +384,8 @@ def list_resumes():
                     resumes.append({
                         'filename': filename,
                         'size': file_stats.st_size,
-                        'uploaded_at': datetime.fromtimestamp(file_stats.st_mtime).isoformat()
+                        'uploaded_at': datetime.fromtimestamp(file_stats.st_mtime).isoformat(),
+                        'file_type': filename.split('.')[-1].upper()
                     })
         
         return jsonify({
@@ -215,203 +420,66 @@ def download_resume(filename):
         logging.error(f"Error downloading file {filename}: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
-@app.route('/api/resumes/view/<filename>', methods=['GET'])
-def view_resume(filename):
-    """View resume content (text extraction)"""
-    try:
-        safe_filename = secure_filename(filename)
-        filepath = os.path.join(UPLOAD_FOLDER, safe_filename)
-        
-        logging.info(f"Attempting to view file: {filepath}")
-        
-        if not os.path.exists(filepath):
-            logging.error(f"File not found: {filepath}")
-            return jsonify({'success': False, 'error': f'File not found: {safe_filename}'}), 404
-        
-        # Extract text from the resume
-        text = extract_text_from_file(filepath)
-        
-        if not text:
-            return jsonify({
-                'success': False,
-                'error': 'Could not extract text from file'
-            }), 500
-        
-        return jsonify({
-            'success': True,
-            'filename': safe_filename,
-            'content': text,
-            'file_size': os.path.getsize(filepath),
-            'file_type': safe_filename.split('.')[-1].upper()
-        })
-    except Exception as e:
-        logging.error(f"Error viewing file {filename}: {e}")
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-@app.route('/api/resumes/stream/<filename>', methods=['GET'])
-def stream_resume(filename):
-    """Stream resume file for viewing in browser"""
-    try:
-        safe_filename = secure_filename(filename)
-        filepath = os.path.join(UPLOAD_FOLDER, safe_filename)
-        
-        if not os.path.exists(filepath):
-            return jsonify({'success': False, 'error': 'File not found'}), 404
-        
-        # Determine mimetype
-        ext = safe_filename.split('.')[-1].lower()
-        mimetype = 'application/pdf' if ext == 'pdf' else 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-        
-        return send_file(
-            filepath,
-            mimetype=mimetype,
-            as_attachment=False,
-            download_name=safe_filename
-        )
-    except Exception as e:
-        logging.error(f"Error streaming file {filename}: {e}")
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-# --------------------------
-# Parsing Routes
-# --------------------------
-
-@app.route('/api/parse/single', methods=['POST'])
-def parse_single_resume():
-    """Parse a single resume"""
-    try:
-        data = request.json
-        filename = data.get('filename')
-        
-        if not filename:
-            return jsonify({'success': False, 'error': 'Filename required'}), 400
-        
-        filepath = os.path.join(UPLOAD_FOLDER, secure_filename(filename))
-        
-        if not os.path.exists(filepath):
-            return jsonify({'success': False, 'error': 'File not found'}), 404
-        
-        # Extract text
-        logging.info(f"Extracting text from {filename}...")
-        text = extract_text_from_file(filepath)
-        
-        # Parse with Gemini
-        logging.info(f"Parsing with Gemini AI...")
-        parsed_data = parse_resume_text(text)
-        
-        if not parsed_data:
-            return jsonify({
-                'success': False,
-                'error': 'Failed to parse resume'
-            }), 500
-        
-        # Add resume filename to parsed data
-        parsed_data['resume_filename'] = filename
-        parsed_data['resume_text'] = text
-        
-        # Save parsed JSON
-        os.makedirs('parsed_json', exist_ok=True)
-        json_filename = os.path.splitext(filename)[0] + '.json'
-        with open(os.path.join('parsed_json', json_filename), 'w') as f:
-            json.dump(parsed_data, f, indent=2)
-        
-        return jsonify({
-            'success': True,
-            'message': 'Resume parsed successfully',
-            'data': parsed_data
-        })
-        
-    except Exception as e:
-        logging.error(f"Error parsing resume: {e}")
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-@app.route('/api/parse/all', methods=['POST'])
+@app.route('/api/resumes/parse-all', methods=['POST'])
 def parse_all_resumes():
-    """Parse all resumes in the folder"""
+    """Parse all resumes in the upload folder"""
     try:
-        results = []
-        
-        if not os.path.exists(UPLOAD_FOLDER):
-            return jsonify({'success': False, 'error': 'No resumes folder found'}), 404
-        
-        for filename in os.listdir(UPLOAD_FOLDER):
-            if allowed_file(filename):
-                try:
-                    filepath = os.path.join(UPLOAD_FOLDER, filename)
-                    
-                    # Extract and parse
-                    text = extract_text_from_file(filepath)
-                    parsed_data = parse_resume_text(text)
-                    
-                    if parsed_data:
-                        # Add resume info
-                        parsed_data['resume_filename'] = filename
-                        parsed_data['resume_text'] = text
-                        
-                        # Save parsed JSON
-                        os.makedirs('parsed_json', exist_ok=True)
-                        json_filename = os.path.splitext(filename)[0] + '.json'
-                        with open(os.path.join('parsed_json', json_filename), 'w') as f:
-                            json.dump(parsed_data, f, indent=2)
-                        
-                        results.append({
-                            'filename': filename,
-                            'status': 'success',
-                            'data': parsed_data
-                        })
-                    else:
-                        results.append({
-                            'filename': filename,
-                            'status': 'failed',
-                            'error': 'Parsing failed'
-                        })
-                        
-                except Exception as e:
-                    results.append({
-                        'filename': filename,
-                        'status': 'error',
-                        'error': str(e)
-                    })
-        
-        success_count = sum(1 for r in results if r['status'] == 'success')
+        results = parse_resumes_module()
         
         return jsonify({
             'success': True,
-            'message': f'Parsed {success_count}/{len(results)} resumes',
+            'message': 'Resume parsing completed',
             'results': results
         })
-        
     except Exception as e:
         logging.error(f"Error parsing all resumes: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
 # --------------------------
-# Candidate Routes
+# Candidate Management Routes
 # --------------------------
 
 @app.route('/api/candidates', methods=['GET'])
 def get_candidates():
-    """Get all candidates"""
+    """Get all candidates with filtering"""
     try:
         candidates = get_all_candidates()
         
         # Apply filters if provided
         search = request.args.get('search', '').lower()
         skill = request.args.get('skill', '').lower()
+        status = request.args.get('status', '').lower()
+        
+        filtered_candidates = candidates
         
         if search:
-            candidates = [c for c in candidates if 
-                         search in c.get('full_name', '').lower() or
-                         search in c.get('email', '').lower()]
+            filtered_candidates = [c for c in filtered_candidates if 
+                                 search in c.get('full_name', '').lower() or
+                                 search in c.get('email', '').lower() or
+                                 search in c.get('current_company', '').lower()]
         
         if skill:
-            candidates = [c for c in candidates if 
-                         skill in ' '.join(c.get('skills', [])).lower()]
+            filtered_candidates = [c for c in filtered_candidates if 
+                                 skill in ' '.join(c.get('skills', [])).lower()]
+        
+        if status == 'scheduled':
+            # Get scheduled interviews
+            scheduled_folder = 'scheduled_interviews'
+            scheduled_candidates = set()
+            if os.path.exists(scheduled_folder):
+                for filename in os.listdir(scheduled_folder):
+                    if filename.endswith('.json') and not filename.startswith('summary_'):
+                        candidate_name = filename.split('_')[0]
+                        scheduled_candidates.add(candidate_name.lower())
+            
+            filtered_candidates = [c for c in filtered_candidates if 
+                                 c.get('full_name', '').lower().replace(' ', '_') in scheduled_candidates]
         
         return jsonify({
             'success': True,
-            'candidates': candidates,
-            'count': len(candidates)
+            'candidates': filtered_candidates,
+            'count': len(filtered_candidates),
+            'total': len(candidates)
         })
     except Exception as e:
         logging.error(f"Error getting candidates: {e}")
@@ -431,7 +499,7 @@ def get_candidate(candidate_id):
         if not os.path.exists(filepath):
             return jsonify({'success': False, 'error': 'Candidate not found'}), 404
         
-        with open(filepath, 'r') as f:
+        with open(filepath, 'r', encoding='utf-8') as f:
             candidate = json.load(f)
             candidate['id'] = candidate_id
             
@@ -452,80 +520,79 @@ def get_candidate(candidate_id):
 def enrich_candidates():
     """Enrich all candidates with LinkedIn data"""
     try:
-        os.makedirs('enriched_json', exist_ok=True)
-        
-        results = []
-        
-        if not os.path.exists('parsed_json'):
-            return jsonify({'success': False, 'error': 'No parsed data found'}), 404
-        
-        for filename in os.listdir('parsed_json'):
-            if filename.endswith('.json'):
-                try:
-                    with open(os.path.join('parsed_json', filename), 'r') as f:
-                        candidate = json.load(f)
-                    
-                    enriched = enrich_candidate(candidate)
-                    
-                    # Preserve resume info
-                    if 'resume_filename' in candidate:
-                        enriched['resume_filename'] = candidate['resume_filename']
-                    if 'resume_text' in candidate:
-                        enriched['resume_text'] = candidate['resume_text']
-                    
-                    with open(os.path.join('enriched_json', filename), 'w') as f:
-                        json.dump(enriched, f, indent=2)
-                    
-                    results.append({
-                        'filename': filename,
-                        'status': 'success'
-                    })
-                except Exception as e:
-                    results.append({
-                        'filename': filename,
-                        'status': 'error',
-                        'error': str(e)
-                    })
-        
-        success_count = sum(1 for r in results if r['status'] == 'success')
+        results = enrich_all_candidates()
         
         return jsonify({
             'success': True,
-            'message': f'Enriched {success_count}/{len(results)} candidates',
+            'message': 'Candidate enrichment completed',
             'results': results
         })
-        
     except Exception as e:
         logging.error(f"Error enriching candidates: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+# --------------------------
+# AI Processing Routes
+# --------------------------
+
+@app.route('/api/ai/parse', methods=['POST'])
+def parse_with_ai():
+    """Parse resumes using Gemini AI"""
+    try:
+        results = gemini_process_all()
+        
+        return jsonify({
+            'success': True,
+            'message': 'AI parsing completed',
+            'results': results
+        })
+    except Exception as e:
+        logging.error(f"Error in AI parsing: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
 # --------------------------
 # Interview Scheduling Routes
 # --------------------------
 
+@app.route('/api/interviews/schedule', methods=['POST'])
+def schedule_interviews():
+    """Schedule interviews for all candidates"""
+    try:
+        data = request.json or {}
+        
+        results = schedule_all_candidates(
+            duration_minutes=data.get('duration_minutes', 45),
+            buffer_minutes=data.get('buffer_minutes', 15),
+            work_hours=tuple(data.get('work_hours', [9, 17])),
+            skip_weekends=data.get('skip_weekends', True)
+        )
+        
+        return jsonify({
+            'success': True,
+            'message': 'Interview scheduling completed',
+            'results': results
+        })
+    except Exception as e:
+        logging.error(f"Error scheduling interviews: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
 @app.route('/api/interviews/scheduled', methods=['GET'])
 def get_scheduled_interviews():
-    """Fetch all scheduled interviews"""
+    """Get all scheduled interviews"""
     try:
         folder = 'scheduled_interviews'
         interviews = []
         
         if not os.path.exists(folder):
-            logging.warning(f"Folder {folder} does not exist")
             return jsonify({
                 'success': True,
                 'interviews': [],
-                'count': 0,
-                'message': 'No scheduled interviews found.'
+                'count': 0
             })
         
-        all_files = os.listdir(folder)
-        logging.info(f"Found {len(all_files)} files in {folder}: {all_files}")
-        
-        for filename in all_files:
+        for filename in os.listdir(folder):
             if filename.endswith('.json') and not filename.startswith('summary_'):
                 filepath = os.path.join(folder, filename)
-                logging.info(f"Reading interview file: {filename}")
                 with open(filepath, 'r') as f:
                     data = json.load(f)
                     data['filename'] = filename
@@ -533,8 +600,6 @@ def get_scheduled_interviews():
         
         # Sort by start_time (most recent first)
         interviews.sort(key=lambda x: x.get('start_time', ''), reverse=True)
-        
-        logging.info(f"Returning {len(interviews)} scheduled interviews")
         
         return jsonify({
             'success': True,
@@ -544,289 +609,6 @@ def get_scheduled_interviews():
         
     except Exception as e:
         logging.error(f"Error fetching scheduled interviews: {e}")
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-
-@app.route('/api/interviews/scheduled/<filename>', methods=['GET'])
-def get_scheduled_interview_file(filename):
-    """Fetch a single scheduled interview JSON"""
-    try:
-        folder = 'scheduled_interviews'
-        safe_name = secure_filename(filename)
-        filepath = os.path.join(folder, safe_name)
-        
-        if not os.path.exists(filepath):
-            return jsonify({'success': False, 'error': 'Interview record not found'}), 404
-        
-        with open(filepath, 'r') as f:
-            data = json.load(f)
-        
-        return jsonify({'success': True, 'data': data})
-        
-    except Exception as e:
-        logging.error(f"Error fetching scheduled interview file: {e}")
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-# Add these routes to your Flask app
-
-@app.route('/api/interviews/upcoming', methods=['GET'])
-def get_upcoming_interviews():
-    """Get upcoming interviews for the next 7 days"""
-    try:
-        service = get_calendar_service()
-        
-        # Calculate time range (next 7 days)
-        now = datetime.now(timezone.utc).isoformat()
-        next_week = (datetime.now(timezone.utc) + timedelta(days=7)).isoformat()
-        
-        events_result = service.events().list(
-            calendarId='primary',
-            timeMin=now,
-            timeMax=next_week,
-            singleEvents=True,
-            orderBy='startTime',
-            q='Interview'  # Search for events with "Interview" in title
-        ).execute()
-        
-        events = events_result.get('items', [])
-        
-        # Format events
-        formatted_events = []
-        for event in events:
-            start = event['start'].get('dateTime', event['start'].get('date'))
-            end = event['end'].get('dateTime', event['end'].get('date'))
-            
-            formatted_events.append({
-                'id': event['id'],
-                'summary': event.get('summary', 'No Title'),
-                'description': event.get('description', ''),
-                'start_time': start,
-                'end_time': end,
-                'hangoutLink': event.get('hangoutLink', ''),
-                'htmlLink': event.get('htmlLink', '')
-            })
-        
-        return jsonify({
-            'success': True,
-            'events': formatted_events,
-            'count': len(formatted_events)
-        })
-        
-    except Exception as e:
-        logging.error(f"Error fetching upcoming interviews: {e}")
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-@app.route('/api/interviews/cancel/<event_id>', methods=['DELETE'])
-def cancel_interview(event_id):
-    """Cancel a scheduled interview"""
-    try:
-        service = get_calendar_service()
-        
-        service.events().delete(
-            calendarId='primary',
-            eventId=event_id
-        ).execute()
-        
-        # Also remove from local storage
-        interview_file = os.path.join('scheduled_interviews', f"{event_id}.json")
-        if os.path.exists(interview_file):
-            os.remove(interview_file)
-        
-        return jsonify({
-            'success': True,
-            'message': 'Interview cancelled successfully'
-        })
-        
-    except Exception as e:
-        logging.error(f"Error cancelling interview: {e}")
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-@app.route('/api/calendar/availability', methods=['GET'])
-def get_calendar_availability():
-    """Get available time slots for scheduling"""
-    try:
-        service = get_calendar_service()
-        
-        # Get busy intervals for next 3 days
-        start_time = datetime.now(timezone.utc)
-        end_time = start_time + timedelta(days=3)
-        
-        body = {
-            "timeMin": start_time.isoformat(),
-            "timeMax": end_time.isoformat(),
-            "items": [{"id": "primary"}]
-        }
-        
-        events_result = service.freebusy().query(body=body).execute()
-        busy_slots = events_result['calendars']['primary'].get('busy', [])
-        
-        # Generate available slots (simplified)
-        available_slots = []
-        current_time = start_time.replace(hour=9, minute=0, second=0, microsecond=0)
-        
-        while current_time.date() <= end_time.date():
-            # Skip weekends
-            if current_time.weekday() < 5:  # 0-4 = Monday-Friday
-                # Work hours: 9 AM to 5 PM
-                slot_end = current_time + timedelta(minutes=45)  # 45-minute slots
-                
-                if slot_end.hour < 17:  # Within work hours
-                    # Check if slot is available
-                    slot_available = True
-                    for busy in busy_slots:
-                        busy_start = datetime.fromisoformat(busy['start'].replace('Z', '+00:00'))
-                        busy_end = datetime.fromisoformat(busy['end'].replace('Z', '+00:00'))
-                        
-                        if (current_time < busy_end and slot_end > busy_start):
-                            slot_available = False
-                            break
-                    
-                    if slot_available:
-                        available_slots.append({
-                            'start': current_time.isoformat(),
-                            'end': slot_end.isoformat()
-                        })
-            
-            current_time += timedelta(minutes=60)  # Check every hour
-        
-        return jsonify({
-            'success': True,
-            'available_slots': available_slots,
-            'count': len(available_slots)
-        })
-        
-    except Exception as e:
-        logging.error(f"Error getting calendar availability: {e}")
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-@app.route('/api/interviews/schedule', methods=['POST'])
-def schedule_interviews():
-    """Schedule interviews for all candidates"""
-    try:
-        data = request.json
-        
-        # Get scheduling parameters
-        start_date_str = data.get('start_date')
-        duration_minutes = data.get('duration_minutes', 45)
-        buffer_minutes = data.get('buffer_minutes', 15)
-        work_hours = tuple(data.get('work_hours', [9, 17]))
-        skip_weekends = data.get('skip_weekends', True)
-        
-        # Parse start date
-        if start_date_str:
-            start_date = datetime.fromisoformat(start_date_str.replace('Z', '+00:00'))
-        else:
-            start_date = None
-        
-        # Get calendar service
-        service = get_calendar_service()
-        
-        # Initialize start time
-        if start_date is None:
-            current_time = datetime.now(timezone.utc)
-            start_time = (current_time + timedelta(days=1)).replace(
-                hour=work_hours[0], minute=0, second=0, microsecond=0
-            )
-        else:
-            start_time = start_date.replace(
-                hour=work_hours[0], minute=0, second=0, microsecond=0, tzinfo=timezone.utc
-            )
-        
-        # Skip weekends if needed
-        if skip_weekends:
-            while start_time.weekday() >= 5:
-                start_time += timedelta(days=1)
-        
-        # Schedule all candidates
-        candidates = get_all_candidates()
-        scheduled = []
-        skipped = []
-        
-        for candidate in candidates:
-            # Check if we need to move to next day
-            interview_end_hour = start_time.hour + (start_time.minute + duration_minutes) / 60
-            if interview_end_hour >= work_hours[1]:
-                start_time = start_time.replace(hour=work_hours[0], minute=0) + timedelta(days=1)
-                
-                if skip_weekends:
-                    while start_time.weekday() >= 5:
-                        start_time += timedelta(days=1)
-            
-            # Schedule interview
-            end_time = schedule_interview(service, candidate, start_time, duration_minutes=duration_minutes)
-            
-            if end_time:
-                scheduled.append({
-                    'candidate': candidate.get('full_name'),
-                    'email': candidate.get('email'),
-                    'time': start_time.isoformat()
-                })
-                start_time = end_time + timedelta(minutes=buffer_minutes)
-            else:
-                skipped.append(candidate.get('full_name'))
-        
-        return jsonify({
-            'success': True,
-            'message': f'Scheduled {len(scheduled)} interviews',
-            'scheduled': scheduled,
-            'skipped': skipped
-        })
-        
-    except Exception as e:
-        logging.error(f"Error scheduling interviews: {e}")
-        return jsonify({'success': False, 'error': str(e)}), 500
-
-
-@app.route('/api/interviews/schedule-single', methods=['POST'])
-def schedule_single_interview():
-    """Schedule interview for a single candidate"""
-    try:
-        data = request.json
-        
-        candidate_id = data.get('candidate_id')
-        start_time_str = data.get('start_time')
-        duration_minutes = data.get('duration_minutes', 45)
-        
-        if not candidate_id or not start_time_str:
-            return jsonify({
-                'success': False,
-                'error': 'candidate_id and start_time required'
-            }), 400
-        
-        # Get candidate
-        filepath = os.path.join('enriched_json', f"{candidate_id}.json")
-        if not os.path.exists(filepath):
-            filepath = os.path.join('parsed_json', f"{candidate_id}.json")
-        
-        if not os.path.exists(filepath):
-            return jsonify({'success': False, 'error': 'Candidate not found'}), 404
-        
-        with open(filepath, 'r') as f:
-            candidate = json.load(f)
-        
-        # Parse start time
-        start_time = datetime.fromisoformat(start_time_str.replace('Z', '+00:00'))
-        
-        # Get calendar service and schedule
-        service = get_calendar_service()
-        end_time = schedule_interview(service, candidate, start_time, duration_minutes=duration_minutes)
-        
-        if end_time:
-            return jsonify({
-                'success': True,
-                'message': 'Interview scheduled successfully',
-                'candidate': candidate.get('full_name'),
-                'start_time': start_time.isoformat(),
-                'end_time': end_time.isoformat()
-            })
-        else:
-            return jsonify({
-                'success': False,
-                'error': 'Failed to schedule interview'
-            }), 500
-            
-    except Exception as e:
-        logging.error(f"Error scheduling single interview: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
 # --------------------------
@@ -851,24 +633,147 @@ def get_statistics():
         # Get skill distribution
         candidates = get_all_candidates()
         all_skills = {}
+        experience_levels = {}
+        companies = {}
+        
         for candidate in candidates:
+            # Skills
             for skill in candidate.get('skills', []):
                 all_skills[skill] = all_skills.get(skill, 0) + 1
+            
+            # Experience levels
+            exp = candidate.get('years_of_experience', 'Unknown')
+            experience_levels[exp] = experience_levels.get(exp, 0) + 1
+            
+            # Companies
+            company = candidate.get('current_company', 'Unknown')
+            if company != 'Not specified':
+                companies[company] = companies.get(company, 0) + 1
         
         top_skills = sorted(all_skills.items(), key=lambda x: x[1], reverse=True)[:10]
+        top_companies = sorted(companies.items(), key=lambda x: x[1], reverse=True)[:5]
         
         return jsonify({
             'success': True,
             'stats': {
                 'total_resumes': resumes_count,
-                'parsed_resumes': parsed_count,
+                'parsed_candidates': parsed_count,
                 'enriched_candidates': enriched_count,
                 'scheduled_interviews': scheduled_count,
-                'top_skills': [{'skill': s[0], 'count': s[1]} for s in top_skills]
+                'top_skills': [{'skill': s[0], 'count': s[1]} for s in top_skills],
+                'experience_levels': experience_levels,
+                'top_companies': [{'company': c[0], 'count': c[1]} for c in top_companies]
             }
         })
     except Exception as e:
         logging.error(f"Error getting statistics: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+# --------------------------
+# System Routes
+# --------------------------
+
+@app.route('/api/system/cleanup', methods=['POST'])
+def system_cleanup():
+    """Clean up temporary files and reset state"""
+    try:
+        data = request.json or {}
+        cleanup_type = data.get('type', 'all')
+        
+        folders_to_clean = []
+        
+        if cleanup_type in ['parsed', 'all']:
+            folders_to_clean.extend(['parsed_text', 'parsed_json'])
+        
+        if cleanup_type in ['enriched', 'all']:
+            folders_to_clean.append('enriched_json')
+        
+        if cleanup_type in ['interviews', 'all']:
+            folders_to_clean.append('scheduled_interviews')
+        
+        if cleanup_type in ['resumes', 'all']:
+            folders_to_clean.append('resumes')
+        
+        results = {}
+        for folder in folders_to_clean:
+            if os.path.exists(folder):
+                file_count = 0
+                for filename in os.listdir(folder):
+                    filepath = os.path.join(folder, filename)
+                    if os.path.isfile(filepath):
+                        os.remove(filepath)
+                        file_count += 1
+                results[folder] = f'Removed {file_count} files'
+            else:
+                results[folder] = 'Folder does not exist'
+        
+        # Also clean tracking files
+        tracking_files = [
+            'processed_emails.json', 'processed_text_hashes.json',
+            'processed_candidates.json', 'enriched_candidates.json',
+            'scheduled_candidates.json'
+        ]
+        
+        for tracking_file in tracking_files:
+            if os.path.exists(tracking_file):
+                os.remove(tracking_file)
+                results[tracking_file] = 'Removed tracking file'
+        
+        return jsonify({
+            'success': True,
+            'message': 'Cleanup completed',
+            'results': results
+        })
+        
+    except Exception as e:
+        logging.error(f"Error during cleanup: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/system/status', methods=['GET'])
+def system_status():
+    """Get system status and folder structure"""
+    try:
+        folders = [
+            'resumes', 'parsed_text', 'parsed_json', 
+            'enriched_json', 'scheduled_interviews'
+        ]
+        
+        status = {}
+        for folder in folders:
+            if os.path.exists(folder):
+                files = [f for f in os.listdir(folder) if os.path.isfile(os.path.join(folder, f))]
+                status[folder] = {
+                    'exists': True,
+                    'file_count': len(files),
+                    'files': files[:10]  # First 10 files
+                }
+            else:
+                status[folder] = {
+                    'exists': False,
+                    'file_count': 0,
+                    'files': []
+                }
+        
+        # Check for tracking files
+        tracking_files = [
+            'processed_emails.json', 'processed_text_hashes.json',
+            'processed_candidates.json', 'enriched_candidates.json',
+            'scheduled_candidates.json'
+        ]
+        
+        tracking_status = {}
+        for tracking_file in tracking_files:
+            tracking_status[tracking_file] = os.path.exists(tracking_file)
+        
+        return jsonify({
+            'success': True,
+            'folders': status,
+            'tracking_files': tracking_status,
+            'modules_loaded': MODULES_LOADED
+        })
+        
+    except Exception as e:
+        logging.error(f"Error getting system status: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
 # --------------------------
@@ -886,5 +791,6 @@ if __name__ == '__main__':
     logging.info("🚀 Starting AI Recruiter API Server...")
     logging.info("📍 Server running at http://localhost:5000")
     logging.info("📚 API Documentation available at /api/health")
+    logging.info("🛡️  Duplicate prevention: ENABLED")
     
     app.run(debug=True, host='0.0.0.0', port=5000)
