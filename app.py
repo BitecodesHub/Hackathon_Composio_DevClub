@@ -3,12 +3,14 @@ from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
 import os
 import json
+import glob
 import logging
 import hashlib
 from datetime import datetime, timedelta, timezone
 from werkzeug.utils import secure_filename
 import subprocess
 import sys
+from googleapiclient.errors import HttpError
 
 # --------------------------
 # Flask App Setup
@@ -369,6 +371,59 @@ def upload_resume():
         logging.error(f"Error uploading file: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
+
+@app.route('/api/interviews/schedule-single', methods=['POST'])
+def schedule_single_interview():
+    """Schedule interview for a single candidate"""
+    try:
+        data = request.json
+        
+        candidate_id = data.get('candidate_id')
+        start_time_str = data.get('start_time')
+        duration_minutes = data.get('duration_minutes', 45)
+        
+        if not candidate_id or not start_time_str:
+            return jsonify({
+                'success': False,
+                'error': 'candidate_id and start_time required'
+            }), 400
+        
+        # Get candidate
+        filepath = os.path.join('enriched_json', f"{candidate_id}.json")
+        if not os.path.exists(filepath):
+            filepath = os.path.join('parsed_json', f"{candidate_id}.json")
+        
+        if not os.path.exists(filepath):
+            return jsonify({'success': False, 'error': 'Candidate not found'}), 404
+        
+        with open(filepath, 'r') as f:
+            candidate = json.load(f)
+        
+        # Parse start time
+        start_time = datetime.fromisoformat(start_time_str.replace('Z', '+00:00'))
+        
+        # Get calendar service and schedule
+        service = get_calendar_service()
+        end_time = schedule_interview(service, candidate, start_time, duration_minutes=duration_minutes)
+        
+        if end_time:
+            return jsonify({
+                'success': True,
+                'message': 'Interview scheduled successfully',
+                'candidate': candidate.get('full_name'),
+                'start_time': start_time.isoformat(),
+                'end_time': end_time.isoformat()
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'error': 'Failed to schedule interview'
+            }), 500
+            
+    except Exception as e:
+        logging.error(f"Error scheduling single interview: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
 @app.route('/api/resumes/list', methods=['GET'])
 def list_resumes():
     """List all uploaded resumes"""
@@ -679,31 +734,56 @@ def get_calendar_availability():
     except Exception as e:
         logging.error(f"Error getting calendar availability: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
+
+
 @app.route('/api/interviews/cancel/<event_id>', methods=['DELETE'])
 def cancel_interview(event_id):
-    """Cancel a scheduled interview"""
+    """Cancel interview (Google Calendar + local JSON cleanup)"""
+    deleted_files = []
+    json_dir = "scheduled_interviews"
+
     try:
         service = get_calendar_service()
-        
-        service.events().delete(
-            calendarId='primary',
-            eventId=event_id
-        ).execute()
-        
-        # Also remove from local storage
-        interview_file = os.path.join('scheduled_interviews', f"{event_id}.json")
-        if os.path.exists(interview_file):
-            os.remove(interview_file)
-        
-        return jsonify({
-            'success': True,
-            'message': 'Interview cancelled successfully'
-        })
-        
-    except Exception as e:
-        logging.error(f"Error cancelling interview: {e}")
-        return jsonify({'success': False, 'error': str(e)}), 500
+        # Try deleting event from Google Calendar
+        service.events().delete(calendarId='primary', eventId=event_id).execute()
+        msg = f"Event {event_id} deleted from Google Calendar."
+    except HttpError as e:
+        # Handle already-deleted or missing events gracefully
+        if e.resp.status in [410, 404]:
+            msg = f"Event {event_id} already deleted or not found in Google Calendar."
+            logging.warning(msg)
+        else:
+            logging.error(f"Unexpected error deleting event {event_id}: {e}")
+            return jsonify({'success': False, 'error': str(e)}), 500
 
+    # ✅ Delete associated JSON file(s)
+    for path in glob.glob(os.path.join(json_dir, "*.json")):
+        try:
+            with open(path, "r") as f:
+                data = json.load(f)
+                if data.get("event_id") == event_id:
+                    os.remove(path)
+                    deleted_files.append(os.path.basename(path))
+                    logging.info(f"🗑️ Deleted local file: {path}")
+        except Exception as e:
+            logging.warning(f"Error reading/deleting {path}: {e}")
+
+    # ✅ Also update scheduled_candidates.json if needed
+    try:
+        if os.path.exists('scheduled_candidates.json'):
+            with open('scheduled_candidates.json', 'r') as f:
+                candidates = set(json.load(f))
+            # If you have candidate info, remove matching hash (optional)
+            with open('scheduled_candidates.json', 'w') as f:
+                json.dump(list(candidates), f)
+    except Exception as e:
+        logging.warning(f"Error updating scheduled_candidates.json: {e}")
+
+    return jsonify({
+        'success': True,
+        'message': f"{msg} Deleted {len(deleted_files)} local JSON file(s).",
+        'deleted_files': deleted_files
+    })
 
 @app.route('/api/resumes/view/<filename>', methods=['GET'])
 def view_resume(filename):

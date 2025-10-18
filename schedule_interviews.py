@@ -21,7 +21,7 @@ logging.basicConfig(
 # --------------------------
 SCOPES = ['https://www.googleapis.com/auth/calendar.events']
 CREDENTIALS_FILE = "credentials.json"
-TOKEN_FILE = "token.json"
+TOKEN_FILE = "token2.json"
 SCHEDULE_LOG_FOLDER = "scheduled_interviews"
 SCHEDULED_CANDIDATES_FILE = 'scheduled_candidates.json'
 
