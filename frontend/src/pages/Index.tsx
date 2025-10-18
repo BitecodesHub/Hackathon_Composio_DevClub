@@ -41,6 +41,14 @@ import {
   Send,
   Plus,
   Eye,
+  Play,
+  Pause,
+  Settings,
+  Workflow,
+  Database,
+  Cpu,
+  Link,
+  Zap,
 } from "lucide-react";
 import InterviewScheduler from "@/components/InterviewScheduler";
 import PipelineStats from "@/components/PipelineStats";
@@ -66,12 +74,39 @@ const Index = () => {
   const [emailTemplate, setEmailTemplate] = useState("");
   const [candidateNotes, setCandidateNotes] = useState({});
   const [interviewFeedback, setInterviewFeedback] = useState({});
+  
+  // Enhanced Pipeline states
+  const [pipelineStatus, setPipelineStatus] = useState("idle"); // idle, running, completed, error
+  const [pipelineProgress, setPipelineProgress] = useState(0);
+  const [pipelineResults, setPipelineResults] = useState(null);
+  const [pipelineStages, setPipelineStages] = useState([
+    { id: 'fetch', name: 'Fetch Resumes', status: 'pending', description: 'Fetch resumes from Gmail', icon: Database },
+    { id: 'parse', name: 'Parse Resumes', status: 'pending', description: 'Extract text from resumes', icon: FileText },
+    { id: 'gemini', name: 'AI Parsing', status: 'pending', description: 'AI parsing with Gemini', icon: Cpu },
+    { id: 'enrich', name: 'Enrich Data', status: 'pending', description: 'Enrich with LinkedIn data', icon: Link },
+    { id: 'schedule', name: 'Schedule Interviews', status: 'pending', description: 'Schedule interviews', icon: Calendar },
+  ]);
+  const [systemStatus, setSystemStatus] = useState(null);
+  const [pipelineLogs, setPipelineLogs] = useState([]);
+  const [currentRunningStage, setCurrentRunningStage] = useState(null);
 
   const emailTemplates = {
     interview_invite: "Hi {name},\n\nWe're impressed with your profile and would like to invite you for an interview.\n\nBest regards,\nRecruiting Team",
     rejection: "Hi {name},\n\nThank you for your interest. Unfortunately, we've decided to move forward with other candidates.\n\nBest regards,\nRecruiting Team",
     follow_up: "Hi {name},\n\nJust following up on your application. We'd like to know if you're still interested in the position.\n\nBest regards,\nRecruiting Team",
     offer: "Hi {name},\n\nCongratulations! We'd like to extend an offer for the position.\n\nBest regards,\nRecruiting Team",
+  };
+
+  // Helper function to add pipeline logs
+  const addPipelineLog = (message, type = 'info') => {
+    const logEntry = {
+      id: Date.now() + Math.random(),
+      timestamp: new Date().toISOString(),
+      message,
+      type,
+    };
+    
+    setPipelineLogs(prev => [logEntry, ...prev].slice(0, 50)); // Keep last 50 logs
   };
 
   const checkApiHealth = async () => {
@@ -85,6 +120,20 @@ const Index = () => {
       setApiConnected(false);
       console.error("API health check failed:", err);
       return false;
+    }
+  };
+
+  const fetchSystemStatus = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/system/status`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success) {
+          setSystemStatus(data);
+        }
+      }
+    } catch (err) {
+      console.error("Failed to fetch system status:", err);
     }
   };
 
@@ -185,6 +234,160 @@ const Index = () => {
     } catch (err) {
       setFetchMessage("✗ Error enriching candidates");
       console.error("Failed to enrich candidates:", err);
+    }
+  };
+
+  // Enhanced Pipeline functions
+  const runCompletePipeline = async () => {
+    try {
+      setPipelineStatus("running");
+      setPipelineProgress(0);
+      setPipelineResults(null);
+      setPipelineLogs([]);
+      setCurrentRunningStage(null);
+      
+      // Reset all stages to pending
+      setPipelineStages(prev => prev.map(stage => ({ ...stage, status: 'pending' })));
+      
+      const stages = ['fetch', 'parse', 'gemini', 'enrich', 'schedule'];
+      let results = [];
+      
+      for (let i = 0; i < stages.length; i++) {
+        const stageId = stages[i];
+        const stage = pipelineStages.find(s => s.id === stageId);
+        
+        // Update current running stage
+        setCurrentRunningStage(stageId);
+        setPipelineStages(prev => 
+          prev.map(s => s.id === stageId ? { ...s, status: 'running' } : s)
+        );
+        
+        // Add log entry
+        addPipelineLog(`Starting ${stage.name}...`, 'info');
+        
+        try {
+          const result = await runPipelineStage(stageId);
+          results.push(result);
+          
+          // Update stage status based on result
+          setPipelineStages(prev =>
+            prev.map(s => s.id === stageId ? { ...s, status: result.success ? 'completed' : 'failed' } : s)
+          );
+          
+          if (result.success) {
+            addPipelineLog(`✓ ${stage.name} completed successfully`, 'success');
+          } else {
+            addPipelineLog(`✗ ${stage.name} failed: ${result.error}`, 'error');
+            // Stop pipeline if a stage fails
+            break;
+          }
+          
+        } catch (error) {
+          const errorResult = { success: false, error: error.message };
+          results.push(errorResult);
+          setPipelineStages(prev =>
+            prev.map(s => s.id === stageId ? { ...s, status: 'failed' } : s)
+          );
+          addPipelineLog(`✗ ${stage.name} failed: ${error.message}`, 'error');
+          break;
+        }
+        
+        // Update progress
+        setPipelineProgress(((i + 1) / stages.length) * 100);
+      }
+      
+      // Check if all stages completed successfully
+      const allSuccess = results.every(r => r.success);
+      setPipelineStatus(allSuccess ? 'completed' : 'error');
+      setCurrentRunningStage(null);
+      
+      if (allSuccess) {
+        addPipelineLog('🎉 All pipeline stages completed successfully!', 'success');
+      } else {
+        addPipelineLog('⚠️ Pipeline completed with errors', 'warning');
+      }
+      
+      setPipelineResults({ results });
+      
+      // Refresh data
+      setTimeout(() => {
+        fetchCandidates();
+        fetchSystemStatus();
+      }, 1000);
+      
+    } catch (error) {
+      setPipelineStatus('error');
+      setCurrentRunningStage(null);
+      addPipelineLog(`✗ Pipeline failed: ${error.message}`, 'error');
+      console.error('Pipeline error:', error);
+    }
+  };
+
+  const runPipelineStage = async (stageId) => {
+    try {
+      const stage = pipelineStages.find(s => s.id === stageId);
+      addPipelineLog(`🚀 Running ${stage.name}...`, 'info');
+      
+      const res = await fetch(`${API_BASE}/pipeline/run-stage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ stage_id: stageId }),
+      });
+      
+      if (!res.ok) throw new Error('Failed to run pipeline stage');
+      
+      const data = await res.json();
+      
+      if (data.success) {
+        return { success: true, data };
+      } else {
+        throw new Error(data.error || 'Stage failed');
+      }
+    } catch (error) {
+      console.error(`Stage ${stageId} error:`, error);
+      return { success: false, error: error.message };
+    }
+  };
+
+  const getStageName = (stageId) => {
+    const stages = {
+      fetch: "Fetch Resumes",
+      parse: "Parse Resumes", 
+      gemini: "AI Parsing",
+      enrich: "Enrich Data",
+      schedule: "Schedule Interviews"
+    };
+    return stages[stageId] || stageId;
+  };
+
+  const cleanupSystem = async (type = "all") => {
+    try {
+      setFetchMessage("🧹 Cleaning up system...");
+      const res = await fetch(`${API_BASE}/system/cleanup`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type }),
+      });
+      
+      if (!res.ok) throw new Error("Cleanup failed");
+      
+      const data = await res.json();
+      setFetchMessage(data.success ? `✓ ${data.message}` : `✗ ${data.error}`);
+      
+      if (data.success) {
+        // Reset pipeline state
+        setPipelineStages(prev => prev.map(stage => ({ ...stage, status: 'pending' })));
+        setPipelineStatus('idle');
+        setPipelineProgress(0);
+        setPipelineResults(null);
+        setPipelineLogs([]);
+        setCurrentRunningStage(null);
+        
+        setTimeout(fetchCandidates, 1000);
+        setTimeout(fetchSystemStatus, 1000);
+      }
+    } catch (err) {
+      setFetchMessage(`✗ Cleanup failed: ${err.message}`);
     }
   };
 
@@ -315,6 +518,7 @@ const Index = () => {
     checkApiHealth().then((healthy) => {
       if (healthy) {
         fetchCandidates();
+        fetchSystemStatus();
       }
     });
   }, []);
@@ -354,6 +558,22 @@ const Index = () => {
                   </>
                 )}
               </Badge>
+
+              {/* Pipeline Status Badge */}
+              <Badge
+                variant={
+                  pipelineStatus === 'completed' ? 'default' :
+                  pipelineStatus === 'running' ? 'secondary' :
+                  pipelineStatus === 'error' ? 'destructive' : 'outline'
+                }
+                className="gap-2"
+              >
+                {pipelineStatus === 'running' && <RefreshCw className="h-3 w-3 animate-spin" />}
+                {pipelineStatus === 'completed' && <CheckCircle2 className="h-3 w-3" />}
+                {pipelineStatus === 'error' && <AlertCircle className="h-3 w-3" />}
+                Pipeline: {pipelineStatus.charAt(0).toUpperCase() + pipelineStatus.slice(1)}
+              </Badge>
+
               <Button
                 onClick={fetchCandidates}
                 variant="ghost"
@@ -366,30 +586,290 @@ const Index = () => {
                 />
                 Refresh
               </Button>
+              
+              {/* Enhanced Pipeline Controls */}
+              <Dialog>
+                <DialogTrigger asChild>
+                  <Button variant="default" size="sm" className="gap-2">
+                    <Workflow className="h-4 w-4" />
+                    Run Pipeline
+                  </Button>
+                </DialogTrigger>
+                <DialogContent className="max-w-4xl max-h-[80vh] overflow-hidden">
+                  <DialogHeader>
+                    <DialogTitle>AI Recruiter Pipeline</DialogTitle>
+                    <DialogDescription>
+                      Run the complete automated recruitment pipeline or individual stages
+                    </DialogDescription>
+                  </DialogHeader>
+                  
+                  <div className="space-y-6 overflow-y-auto max-h-[60vh]">
+                    {/* Pipeline Status Header */}
+                    <Card className="p-4">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <div className={`p-2 rounded-full ${
+                            pipelineStatus === 'running' ? 'bg-blue-100 text-blue-600' :
+                            pipelineStatus === 'completed' ? 'bg-green-100 text-green-600' :
+                            pipelineStatus === 'error' ? 'bg-red-100 text-red-600' :
+                            'bg-gray-100 text-gray-600'
+                          }`}>
+                            {pipelineStatus === 'running' ? <RefreshCw className="h-5 w-5 animate-spin" /> :
+                             pipelineStatus === 'completed' ? <CheckCircle2 className="h-5 w-5" /> :
+                             pipelineStatus === 'error' ? <AlertCircle className="h-5 w-5" /> :
+                             <Play className="h-5 w-5" />}
+                          </div>
+                          <div>
+                            <p className="font-medium">
+                              {pipelineStatus === 'running' ? 'Pipeline Running' :
+                               pipelineStatus === 'completed' ? 'Pipeline Completed' :
+                               pipelineStatus === 'error' ? 'Pipeline Failed' :
+                               'Ready to Run'}
+                            </p>
+                            <p className="text-sm text-muted-foreground">
+                              {pipelineStatus === 'running' ? `Currently running: ${currentRunningStage ? pipelineStages.find(s => s.id === currentRunningStage)?.name : '...'}` :
+                               'Run individual stages or complete pipeline'}
+                            </p>
+                          </div>
+                        </div>
+                        <Badge variant={
+                          pipelineStatus === 'completed' ? 'default' :
+                          pipelineStatus === 'running' ? 'secondary' :
+                          pipelineStatus === 'error' ? 'destructive' : 'outline'
+                        }>
+                          {Math.round(pipelineProgress)}% Complete
+                        </Badge>
+                      </div>
+                      
+                      {/* Progress Bar */}
+                      {pipelineStatus === 'running' && (
+                        <div className="mt-4">
+                          <div className="w-full bg-gray-200 rounded-full h-2">
+                            <div 
+                              className="bg-blue-600 h-2 rounded-full transition-all duration-300"
+                              style={{ width: `${pipelineProgress}%` }}
+                            />
+                          </div>
+                        </div>
+                      )}
+                    </Card>
+
+                    {/* Pipeline Stages */}
+                    <div className="space-y-4">
+                      <h4 className="font-medium">Pipeline Stages</h4>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {pipelineStages.map((stage) => {
+                          const StageIcon = stage.icon;
+                          const isRunning = currentRunningStage === stage.id;
+                          const isDisabled = pipelineStatus === 'running' && !isRunning;
+                          
+                          return (
+                            <Card key={stage.id} className={`p-4 ${
+                              stage.status === 'completed' ? 'border-green-200 bg-green-50' :
+                              stage.status === 'running' ? 'border-blue-200 bg-blue-50' :
+                              stage.status === 'failed' ? 'border-red-200 bg-red-50' : ''
+                            }`}>
+                              <div className="flex items-center justify-between mb-3">
+                                <div className="flex items-center gap-3">
+                                  <div className={`p-2 rounded-lg ${
+                                    stage.status === 'completed' ? 'bg-green-100' :
+                                    stage.status === 'running' ? 'bg-blue-100' :
+                                    stage.status === 'failed' ? 'bg-red-100' : 'bg-gray-100'
+                                  }`}>
+                                    <StageIcon className={`h-5 w-5 ${
+                                      stage.status === 'completed' ? 'text-green-600' :
+                                      stage.status === 'running' ? 'text-blue-600' :
+                                      stage.status === 'failed' ? 'text-red-600' : 'text-gray-600'
+                                    }`} />
+                                  </div>
+                                  <div>
+                                    <p className="font-medium">{stage.name}</p>
+                                    <p className="text-xs text-muted-foreground">{stage.description}</p>
+                                  </div>
+                                </div>
+                                <Badge 
+                                  variant={
+                                    stage.status === 'completed' ? 'default' : 
+                                    stage.status === 'running' ? 'secondary' :
+                                    stage.status === 'failed' ? 'destructive' : 'outline'
+                                  }
+                                  className="gap-1"
+                                >
+                                  {stage.status === 'running' && <RefreshCw className="h-3 w-3 animate-spin" />}
+                                  {stage.status === 'completed' && <CheckCircle2 className="h-3 w-3" />}
+                                  {stage.status === 'failed' && <AlertCircle className="h-3 w-3" />}
+                                  {stage.status.charAt(0).toUpperCase() + stage.status.slice(1)}
+                                </Badge>
+                              </div>
+                              <Button
+                                onClick={() => runPipelineStage(stage.id)}
+                                variant={stage.status === 'completed' ? 'outline' : 'default'}
+                                size="sm"
+                                className="w-full gap-2"
+                                disabled={isDisabled || isRunning}
+                              >
+                                {isRunning ? (
+                                  <>
+                                    <RefreshCw className="h-3 w-3 animate-spin" />
+                                    Running...
+                                  </>
+                                ) : stage.status === 'completed' ? (
+                                  <>
+                                    <RefreshCw className="h-3 w-3" />
+                                    Run Again
+                                  </>
+                                ) : (
+                                  <>
+                                    <Play className="h-3 w-3" />
+                                    Run Stage
+                                  </>
+                                )}
+                              </Button>
+                            </Card>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {/* Pipeline Logs */}
+                    {(pipelineLogs.length > 0 || pipelineStatus === 'running') && (
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between">
+                          <h4 className="font-medium">Pipeline Logs</h4>
+                          <Button 
+                            variant="outline" 
+                            size="sm" 
+                            onClick={() => setPipelineLogs([])}
+                            disabled={pipelineStatus === 'running'}
+                          >
+                            Clear Logs
+                          </Button>
+                        </div>
+                        <Card className="p-4">
+                          <div className="space-y-2 max-h-40 overflow-y-auto">
+                            {pipelineLogs.length > 0 ? (
+                              pipelineLogs.map((log) => (
+                                <div key={log.id} className="flex items-start gap-3 text-sm">
+                                  <span className="text-muted-foreground text-xs mt-0.5 whitespace-nowrap">
+                                    {new Date(log.timestamp).toLocaleTimeString()}
+                                  </span>
+                                  <span className={`flex-1 ${
+                                    log.type === 'success' ? 'text-green-600' :
+                                    log.type === 'error' ? 'text-red-600' :
+                                    log.type === 'warning' ? 'text-yellow-600' : 'text-foreground'
+                                  }`}>
+                                    {log.message}
+                                  </span>
+                                </div>
+                              ))
+                            ) : (
+                              <p className="text-sm text-muted-foreground text-center py-4">
+                                No logs yet. Run a pipeline stage to see logs here.
+                              </p>
+                            )}
+                          </div>
+                        </Card>
+                      </div>
+                    )}
+
+                    {/* Action Buttons */}
+                    <div className="flex gap-3 pt-4 border-t">
+                      <Button
+                        onClick={runCompletePipeline}
+                        className="flex-1 gap-2"
+                        disabled={pipelineStatus === 'running'}
+                        variant={pipelineStatus === 'running' ? 'outline' : 'default'}
+                      >
+                        {pipelineStatus === 'running' ? (
+                          <>
+                            <RefreshCw className="h-4 w-4 animate-spin" />
+                            Running Pipeline...
+                          </>
+                        ) : (
+                          <>
+                            <Zap className="h-4 w-4" />
+                            Run Complete Pipeline
+                          </>
+                        )}
+                      </Button>
+                      
+                      <Dialog>
+                        <DialogTrigger asChild>
+                          <Button variant="outline" size="sm" className="gap-2">
+                            <Settings className="h-4 w-4" />
+                            Cleanup
+                          </Button>
+                        </DialogTrigger>
+                        <DialogContent>
+                          <DialogHeader>
+                            <DialogTitle>System Cleanup</DialogTitle>
+                            <DialogDescription>
+                              Remove temporary files and reset pipeline state
+                            </DialogDescription>
+                          </DialogHeader>
+                          <div className="space-y-3">
+                            <Button 
+                              onClick={() => cleanupSystem("all")}
+                              variant="outline" 
+                              className="w-full justify-start"
+                            >
+                              Clean All Files
+                            </Button>
+                            <Button 
+                              onClick={() => cleanupSystem("resumes")}
+                              variant="outline" 
+                              className="w-full justify-start"
+                            >
+                              Clean Resumes Only
+                            </Button>
+                            <Button 
+                              onClick={() => cleanupSystem("parsed")}
+                              variant="outline" 
+                              className="w-full justify-start"
+                            >
+                              Clean Parsed Data
+                            </Button>
+                          </div>
+                        </DialogContent>
+                      </Dialog>
+                    </div>
+
+                    {/* System Status */}
+                    {systemStatus && (
+                      <Card className="p-4">
+                        <h4 className="font-medium mb-3">System Status</h4>
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                          <div className="text-center p-3 bg-blue-50 rounded-lg">
+                            <p className="text-muted-foreground">Resumes</p>
+                            <p className="text-2xl font-bold text-blue-600">{systemStatus.folders?.resumes?.file_count || 0}</p>
+                          </div>
+                          <div className="text-center p-3 bg-green-50 rounded-lg">
+                            <p className="text-muted-foreground">Parsed</p>
+                            <p className="text-2xl font-bold text-green-600">{systemStatus.folders?.parsed_json?.file_count || 0}</p>
+                          </div>
+                          <div className="text-center p-3 bg-purple-50 rounded-lg">
+                            <p className="text-muted-foreground">Enriched</p>
+                            <p className="text-2xl font-bold text-purple-600">{systemStatus.folders?.enriched_json?.file_count || 0}</p>
+                          </div>
+                          <div className="text-center p-3 bg-orange-50 rounded-lg">
+                            <p className="text-muted-foreground">Interviews</p>
+                            <p className="text-2xl font-bold text-orange-600">{systemStatus.folders?.scheduled_interviews?.file_count || 0}</p>
+                          </div>
+                        </div>
+                      </Card>
+                    )}
+                  </div>
+                </DialogContent>
+              </Dialog>
+
               <Button
                 onClick={fetchGmailResumes}
-                variant="default"
+                variant="outline"
                 size="sm"
                 className="gap-2"
               >
                 <FileText className="h-4 w-4" />
                 Fetch Resumes
-              </Button>
-              <Button
-                onClick={parseAllResumes}
-                variant="outline"
-                size="sm"
-                className="gap-2"
-              >
-                Parse Resumes
-              </Button>
-              <Button
-                onClick={enrichCandidates}
-                variant="outline"
-                size="sm"
-                className="gap-2"
-              >
-                Enrich Candidates
               </Button>
             </div>
           </div>
@@ -419,6 +899,7 @@ const Index = () => {
           </TabsList>
 
           <TabsContent value="pipeline" className="space-y-6">
+            {/* Quick Stats */}
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
               <Card className="p-4">
                 <div className="flex items-center gap-3">
@@ -493,6 +974,7 @@ const Index = () => {
 
             <PipelineStats candidates={candidates} />
 
+            {/* Candidate List */}
             <Card className="p-4">
               <div className="flex flex-wrap gap-4">
                 <div className="flex-1 min-w-[200px]">
@@ -753,7 +1235,7 @@ const Index = () => {
                                       const input = document.getElementById(
                                         `note-${candidate.id}`
                                       );
-                                      if (input.value) {
+                                      if (input?.value) {
                                         addNote(candidate.id, input.value);
                                         input.value = "";
                                       }
@@ -912,7 +1394,6 @@ const Index = () => {
   )}
 />
           </TabsContent>
-
           <TabsContent value="analytics" className="space-y-6">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <Card className="p-6">
