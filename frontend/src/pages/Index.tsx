@@ -3,35 +3,84 @@ import { Card } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { 
-  Users, 
-  Calendar, 
-  FileText, 
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+import {
+  Users,
+  Calendar,
+  FileText,
   TrendingUp,
   CheckCircle2,
   RefreshCw,
-  AlertCircle
+  AlertCircle,
+  Search,
+  Download,
+  Mail,
+  MessageSquare,
+  Star,
+  BarChart3,
+  Clock,
+  Award,
+  Briefcase,
+  GraduationCap,
+  Send,
+  Plus,
+  Eye,
 } from "lucide-react";
-import CandidateCard from "@/components/CandidateCard";
 import InterviewScheduler from "@/components/InterviewScheduler";
 import PipelineStats from "@/components/PipelineStats";
+import ResumeViewer from "@/components/ResumeViewer";
 
 const API_BASE = "http://localhost:5000/api";
 
 const Index = () => {
   const [candidates, setCandidates] = useState([]);
+  const [filteredCandidates, setFilteredCandidates] = useState([]);
   const [selectedTab, setSelectedTab] = useState("pipeline");
   const [loading, setLoading] = useState(false);
   const [fetchMessage, setFetchMessage] = useState("");
   const [apiConnected, setApiConnected] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [skillFilter, setSkillFilter] = useState("");
+  const [stageFilter, setStageFilter] = useState("all");
+  const [experienceFilter, setExperienceFilter] = useState("all");
+  const [sortBy, setSortBy] = useState("score");
+  const [selectedCandidates, setSelectedCandidates] = useState([]);
+  const [showEmailDialog, setShowEmailDialog] = useState(false);
+  const [currentCandidate, setCurrentCandidate] = useState(null);
+  const [emailTemplate, setEmailTemplate] = useState("");
+  const [candidateNotes, setCandidateNotes] = useState({});
+  const [interviewFeedback, setInterviewFeedback] = useState({});
 
-  // Check API health
+  const emailTemplates = {
+    interview_invite: "Hi {name},\n\nWe're impressed with your profile and would like to invite you for an interview.\n\nBest regards,\nRecruiting Team",
+    rejection: "Hi {name},\n\nThank you for your interest. Unfortunately, we've decided to move forward with other candidates.\n\nBest regards,\nRecruiting Team",
+    follow_up: "Hi {name},\n\nJust following up on your application. We'd like to know if you're still interested in the position.\n\nBest regards,\nRecruiting Team",
+    offer: "Hi {name},\n\nCongratulations! We'd like to extend an offer for the position.\n\nBest regards,\nRecruiting Team",
+  };
+
   const checkApiHealth = async () => {
     try {
       const res = await fetch(`${API_BASE}/health`);
+      if (!res.ok) throw new Error("API health check failed");
       const data = await res.json();
-      setApiConnected(data.status === 'healthy');
-      return true;
+      setApiConnected(data.status === "healthy");
+      return data.status === "healthy";
     } catch (err) {
       setApiConnected(false);
       console.error("API health check failed:", err);
@@ -39,20 +88,25 @@ const Index = () => {
     }
   };
 
-  // Fetch candidates from Flask
   const fetchCandidates = async () => {
     try {
       setLoading(true);
       const res = await fetch(`${API_BASE}/candidates`);
+      if (!res.ok) throw new Error("Failed to fetch candidates");
       const data = await res.json();
-      
+
       if (data.success) {
-        setCandidates(data.candidates || []);
-        setFetchMessage(`✓ Loaded ${data.candidates?.length || 0} candidates`);
+        const candidatesWithScore = (data.candidates || []).map((c) => ({
+          ...c,
+          score: c.score || calculateScore(c),
+          stage: c.stage || "screening",
+        }));
+        setCandidates(candidatesWithScore);
+        setFilteredCandidates(candidatesWithScore);
+        setFetchMessage(`✓ Loaded ${candidatesWithScore.length} candidates`);
         setTimeout(() => setFetchMessage(""), 3000);
       } else {
-        console.error("Error:", data.error);
-        setFetchMessage(`✗ Error: ${data.error}`);
+        throw new Error(data.error);
       }
     } catch (err) {
       console.error("Failed to fetch candidates:", err);
@@ -63,7 +117,23 @@ const Index = () => {
     }
   };
 
-  // Fetch resumes from Gmail
+  const calculateScore = (candidate) => {
+    let score = 0;
+    const skills = candidate.skills || [];
+    score += Math.min(skills.length * 5, 40);
+    const experience = candidate.experience || [];
+    const totalYears = experience.reduce(
+      (acc, exp) => acc + (exp.duration ? parseInt(exp.duration) : 1),
+      0
+    );
+    score += Math.min(totalYears * 3, 30);
+    const education = candidate.education || [];
+    score += Math.min(education.length * 10, 20);
+    if (candidate.linkedin_url) score += 5;
+    if (candidate.phone) score += 5;
+    return Math.min(Math.round(score), 100);
+  };
+
   const fetchGmailResumes = async () => {
     try {
       setFetchMessage("📧 Fetching resumes from Gmail...");
@@ -72,50 +142,175 @@ const Index = () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ query: "has:attachment" }),
       });
+      if (!res.ok) throw new Error("Failed to fetch resumes");
       const data = await res.json();
       setFetchMessage(data.success ? `✓ ${data.message}` : `✗ ${data.error}`);
-      
       if (data.success) {
-        setTimeout(() => fetchCandidates(), 1000);
+        setTimeout(fetchCandidates, 1000);
       }
     } catch (err) {
       setFetchMessage("✗ Error connecting to backend");
+      console.error("Failed to fetch Gmail resumes:", err);
     }
   };
 
-  // Parse all resumes
   const parseAllResumes = async () => {
     try {
       setFetchMessage("🔄 Parsing all resumes...");
       const res = await fetch(`${API_BASE}/parse/all`, { method: "POST" });
+      if (!res.ok) throw new Error("Failed to parse resumes");
       const data = await res.json();
       setFetchMessage(data.success ? `✓ ${data.message}` : `✗ ${data.error}`);
-      
       if (data.success) {
-        setTimeout(() => fetchCandidates(), 1000);
+        setTimeout(fetchCandidates, 1000);
       }
     } catch (err) {
       setFetchMessage("✗ Error parsing resumes");
+      console.error("Failed to parse resumes:", err);
     }
   };
 
-  // Enrich candidates
   const enrichCandidates = async () => {
     try {
       setFetchMessage("🚀 Enriching candidate profiles...");
-      const res = await fetch(`${API_BASE}/candidates/enrich`, { method: "POST" });
+      const res = await fetch(`${API_BASE}/candidates/enrich`, {
+        method: "POST",
+      });
+      if (!res.ok) throw new Error("Failed to enrich candidates");
       const data = await res.json();
       setFetchMessage(data.success ? `✓ ${data.message}` : `✗ ${data.error}`);
-      
       if (data.success) {
-        setTimeout(() => fetchCandidates(), 1000);
+        setTimeout(fetchCandidates, 1000);
       }
     } catch (err) {
       setFetchMessage("✗ Error enriching candidates");
+      console.error("Failed to enrich candidates:", err);
     }
   };
 
-  // Load candidates on mount
+  useEffect(() => {
+    let filtered = [...candidates];
+
+    if (searchQuery) {
+      filtered = filtered.filter(
+        (c) =>
+          c.full_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          c.email?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          c.skills?.some((s) =>
+            s.toLowerCase().includes(searchQuery.toLowerCase())
+          )
+      );
+    }
+
+    if (skillFilter) {
+      filtered = filtered.filter((c) =>
+        c.skills?.some((s) => s.toLowerCase().includes(skillFilter.toLowerCase()))
+      );
+    }
+
+    if (stageFilter !== "all") {
+      filtered = filtered.filter((c) => c.stage === stageFilter);
+    }
+
+    if (experienceFilter !== "all") {
+      filtered = filtered.filter((c) => {
+        const totalYears = (c.experience || []).reduce(
+          (acc, exp) => acc + (exp.duration ? parseInt(exp.duration) : 1),
+          0
+        );
+        if (experienceFilter === "entry") return totalYears < 2;
+        if (experienceFilter === "mid") return totalYears >= 2 && totalYears < 5;
+        if (experienceFilter === "senior") return totalYears >= 5;
+        return true;
+      });
+    }
+
+    if (sortBy === "score") {
+      filtered.sort((a, b) => (b.score || 0) - (a.score || 0));
+    } else if (sortBy === "name") {
+      filtered.sort((a, b) =>
+        (a.full_name || "").localeCompare(b.full_name || "")
+      );
+    } else if (sortBy === "recent") {
+      filtered.sort(
+        (a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0)
+      );
+    }
+
+    setFilteredCandidates(filtered);
+  }, [candidates, searchQuery, skillFilter, stageFilter, experienceFilter, sortBy]);
+
+  const exportToCSV = () => {
+    const headers = [
+      "Name",
+      "Email",
+      "Phone",
+      "Skills",
+      "Experience",
+      "Score",
+      "Stage",
+    ];
+    const rows = filteredCandidates.map((c) => [
+      c.full_name || "",
+      c.email || "",
+      c.phone || "",
+      (c.skills || []).join("; "),
+      (c.experience || []).map((e) => `${e.title} at ${e.company}`).join("; "),
+      c.score || 0,
+      c.stage || "screening",
+    ]);
+
+    const csv = [headers, ...rows]
+      .map((row) => row.map((cell) => `"${cell}"`).join(","))
+      .join("\n");
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `candidates_${new Date().toISOString().split("T")[0]}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const toggleCandidateSelection = (candidateId) => {
+    setSelectedCandidates((prev) =>
+      prev.includes(candidateId)
+        ? prev.filter((id) => id !== candidateId)
+        : [...prev, candidateId]
+    );
+  };
+
+  const sendEmail = (template) => {
+    if (!currentCandidate) return;
+    const email = emailTemplates[template].replace(
+      "{name}",
+      currentCandidate.full_name || "Candidate"
+    );
+    setEmailTemplate(email);
+    setShowEmailDialog(true);
+  };
+
+  const addNote = (candidateId, note) => {
+    setCandidateNotes((prev) => ({
+      ...prev,
+      [candidateId]: [
+        ...(prev[candidateId] || []),
+        {
+          text: note,
+          timestamp: new Date().toISOString(),
+          author: "Recruiter",
+        },
+      ],
+    }));
+  };
+
+  const saveFeedback = (candidateId, feedback) => {
+    setInterviewFeedback((prev) => ({
+      ...prev,
+      [candidateId]: feedback,
+    }));
+  };
+
   useEffect(() => {
     checkApiHealth().then((healthy) => {
       if (healthy) {
@@ -126,7 +321,6 @@ const Index = () => {
 
   return (
     <div className="min-h-screen bg-background">
-      {/* Header */}
       <header className="border-b bg-card shadow-sm sticky top-0 z-10">
         <div className="container mx-auto px-6 py-4">
           <div className="flex items-center justify-between flex-wrap gap-4">
@@ -135,68 +329,70 @@ const Index = () => {
                 <Users className="h-6 w-6 text-white" />
               </div>
               <div>
-                <h1 className="text-2xl font-bold text-foreground">AI Recruiter Copilot</h1>
-                <p className="text-sm text-muted-foreground">Intelligent Hiring Dashboard</p>
+                <h1 className="text-2xl font-bold text-foreground">
+                  AI Recruiter Copilot
+                </h1>
+                <p className="text-sm text-muted-foreground">
+                  Intelligent Hiring Dashboard
+                </p>
               </div>
             </div>
-            
             <div className="flex items-center gap-3 flex-wrap">
-              <Badge 
-                variant={apiConnected ? "secondary" : "destructive"} 
+              <Badge
+                variant={apiConnected ? "secondary" : "destructive"}
                 className="gap-2"
               >
                 {apiConnected ? (
                   <>
                     <CheckCircle2 className="h-3 w-3" />
-                    Connected to Flask API
+                    Connected
                   </>
                 ) : (
                   <>
                     <AlertCircle className="h-3 w-3" />
-                    API Disconnected
+                    Disconnected
                   </>
                 )}
               </Badge>
-              
-              <Button 
-                onClick={fetchCandidates} 
-                variant="ghost" 
+              <Button
+                onClick={fetchCandidates}
+                variant="ghost"
                 size="sm"
                 className="gap-2"
                 disabled={loading}
               >
-                <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+                <RefreshCw
+                  className={`h-4 w-4 ${loading ? "animate-spin" : ""}`}
+                />
                 Refresh
               </Button>
-              
-              <Button 
-                onClick={fetchGmailResumes} 
-                variant="default" 
-                size="sm" 
+              <Button
+                onClick={fetchGmailResumes}
+                variant="default"
+                size="sm"
                 className="gap-2"
               >
                 <FileText className="h-4 w-4" />
                 Fetch Resumes
               </Button>
-              
-              <Button 
-                onClick={parseAllResumes} 
-                variant="outline" 
+              <Button
+                onClick={parseAllResumes}
+                variant="outline"
                 size="sm"
+                className="gap-2"
               >
                 Parse Resumes
               </Button>
-              
-              <Button 
-                onClick={enrichCandidates} 
-                variant="outline" 
+              <Button
+                onClick={enrichCandidates}
+                variant="outline"
                 size="sm"
+                className="gap-2"
               >
                 Enrich Candidates
               </Button>
             </div>
           </div>
-          
           {fetchMessage && (
             <div className="mt-3 p-2 rounded-md bg-muted/50 border">
               <p className="text-sm text-muted-foreground">{fetchMessage}</p>
@@ -217,22 +413,162 @@ const Index = () => {
               Schedule
             </TabsTrigger>
             <TabsTrigger value="analytics" className="gap-2">
-              <FileText className="h-4 w-4" />
+              <BarChart3 className="h-4 w-4" />
               Analytics
             </TabsTrigger>
           </TabsList>
 
-          {/* Pipeline Tab */}
           <TabsContent value="pipeline" className="space-y-6">
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+              <Card className="p-4">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 bg-blue-100 rounded-lg">
+                    <Users className="h-5 w-5 text-blue-600" />
+                  </div>
+                  <div>
+                    <p className="text-sm text-muted-foreground">
+                      Total Candidates
+                    </p>
+                    <p className="text-2xl font-bold">{candidates.length}</p>
+                  </div>
+                </div>
+              </Card>
+              <Card className="p-4">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 bg-green-100 rounded-lg">
+                    <CheckCircle2 className="h-5 w-5 text-green-600" />
+                  </div>
+                  <div>
+                    <p className="text-sm text-muted-foreground">
+                      Interview Stage
+                    </p>
+                    <p className="text-2xl font-bold">
+                      {candidates.filter((c) => c.stage === "interview").length}
+                    </p>
+                  </div>
+                </div>
+              </Card>
+              <Card className="p-4">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 bg-yellow-100 rounded-lg">
+                    <Star className="h-5 w-5 text-yellow-600" />
+                  </div>
+                  <div>
+                    <p className="text-sm text-muted-foreground">Avg Score</p>
+                    <p className="text-2xl font-bold">
+                      {candidates.length > 0
+                        ? (
+                            candidates.reduce(
+                              (acc, c) => acc + (c.score || 0),
+                              0
+                            ) / candidates.length
+                          ).toFixed(0)
+                        : "0"}
+                    </p>
+                  </div>
+                </div>
+              </Card>
+              <Card className="p-4">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 bg-purple-100 rounded-lg">
+                    <Clock className="h-5 w-5 text-purple-600" />
+                  </div>
+                  <div>
+                    <p className="text-sm text-muted-foreground">This Week</p>
+                    <p className="text-2xl font-bold">
+                      {
+                        candidates.filter((c) => {
+                          const date = new Date(c.created_at || Date.now());
+                          const weekAgo = new Date(
+                            Date.now() - 7 * 24 * 60 * 60 * 1000
+                          );
+                          return date > weekAgo;
+                        }).length
+                      }
+                    </p>
+                  </div>
+                </div>
+              </Card>
+            </div>
+
             <PipelineStats candidates={candidates} />
+
+            <Card className="p-4">
+              <div className="flex flex-wrap gap-4">
+                <div className="flex-1 min-w-[200px]">
+                  <div className="relative">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                    <Input
+                      placeholder="Search candidates..."
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      className="pl-10"
+                    />
+                  </div>
+                </div>
+                <Select value={stageFilter} onValueChange={setStageFilter}>
+                  <SelectTrigger className="w-[150px]">
+                    <SelectValue placeholder="Stage" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Stages</SelectItem>
+                    <SelectItem value="screening">Screening</SelectItem>
+                    <SelectItem value="interview">Interview</SelectItem>
+                    <SelectItem value="offer">Offer</SelectItem>
+                    <SelectItem value="hired">Hired</SelectItem>
+                    <SelectItem value="rejected">Rejected</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Select
+                  value={experienceFilter}
+                  onValueChange={setExperienceFilter}
+                >
+                  <SelectTrigger className="w-[150px]">
+                    <SelectValue placeholder="Experience" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Levels</SelectItem>
+                    <SelectItem value="entry">Entry (0-2y)</SelectItem>
+                    <SelectItem value="mid">Mid (2-5y)</SelectItem>
+                    <SelectItem value="senior">Senior (5+y)</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Select value={sortBy} onValueChange={setSortBy}>
+                  <SelectTrigger className="w-[150px]">
+                    <SelectValue placeholder="Sort by" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="score">Highest Score</SelectItem>
+                    <SelectItem value="name">Name</SelectItem>
+                    <SelectItem value="recent">Most Recent</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Button
+                  onClick={exportToCSV}
+                  variant="outline"
+                  size="sm"
+                  className="gap-2"
+                >
+                  <Download className="h-4 w-4" />
+                  Export CSV
+                </Button>
+              </div>
+            </Card>
 
             <div className="space-y-4">
               <div className="flex items-center justify-between">
-                <h2 className="text-xl font-semibold text-foreground">Candidate Pipeline</h2>
+                <h2 className="text-xl font-semibold text-foreground">
+                  Candidate Pipeline
+                </h2>
                 <div className="flex items-center gap-2">
+                  {selectedCandidates.length > 0 && (
+                    <Badge variant="secondary" className="gap-2">
+                      {selectedCandidates.length} selected
+                    </Badge>
+                  )}
                   <Badge variant="outline" className="gap-2">
                     <Users className="h-3 w-3" />
-                    {loading ? "Loading..." : `${candidates.length} Active Candidates`}
+                    {filteredCandidates.length} Candidates
                   </Badge>
                 </div>
               </div>
@@ -241,20 +577,323 @@ const Index = () => {
                 {loading ? (
                   <Card className="p-8 text-center">
                     <RefreshCw className="h-8 w-8 animate-spin mx-auto mb-3 text-primary" />
-                    <p className="text-sm text-muted-foreground">Loading candidates...</p>
+                    <p className="text-sm text-muted-foreground">
+                      Loading candidates...
+                    </p>
                   </Card>
-                ) : candidates.length > 0 ? (
-                  candidates.map((candidate) => (
-                    <CandidateCard key={candidate.id} candidate={candidate} />
+                ) : filteredCandidates.length > 0 ? (
+                  filteredCandidates.map((candidate) => (
+                    <Card
+                      key={candidate.id}
+                      className="p-6 hover:shadow-md transition-shadow"
+                    >
+                      <div className="flex items-start justify-between gap-4">
+                        <div className="flex-1">
+                          <div className="flex items-center gap-3 mb-3">
+                            <div className="h-12 w-12 rounded-full bg-gradient-to-br from-primary to-accent flex items-center justify-center text-white font-bold text-lg">
+                              {(candidate.full_name || "U")[0].toUpperCase()}
+                            </div>
+                            <div>
+                              <h3 className="font-semibold text-lg">
+                                {candidate.full_name || "Unknown"}
+                              </h3>
+                              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                                <Mail className="h-3 w-3" />
+                                {candidate.email || "No email"}
+                              </div>
+                            </div>
+                            <Badge variant="secondary" className="ml-auto">
+                              <Star className="h-3 w-3 mr-1" />
+                              {candidate.score || 0}
+                            </Badge>
+                          </div>
+                          <div className="space-y-2 mb-3">
+                            {candidate.experience?.[0] && (
+                              <div className="flex items-center gap-2 text-sm">
+                                <Briefcase className="h-4 w-4 text-muted-foreground" />
+                                <span>
+                                  {candidate.experience[0].title} at{" "}
+                                  {candidate.experience[0].company}
+                                </span>
+                              </div>
+                            )}
+                            {candidate.education?.[0] && (
+                              <div className="flex items-center gap-2 text-sm">
+                                <GraduationCap className="h-4 w-4 text-muted-foreground" />
+                                <span>
+                                  {candidate.education[0].degree} -{" "}
+                                  {candidate.education[0].institution}
+                                </span>
+                              </div>
+                            )}
+                          </div>
+                          <div className="flex flex-wrap gap-2 mb-4">
+                            {(candidate.skills || [])
+                              .slice(0, 5)
+                              .map((skill, idx) => (
+                                <Badge
+                                  key={idx}
+                                  variant="outline"
+                                  className="text-xs"
+                                >
+                                  {skill}
+                                </Badge>
+                              ))}
+                            {(candidate.skills?.length || 0) > 5 && (
+                              <Badge variant="outline" className="text-xs">
+                                +{(candidate.skills.length - 5)} more
+                              </Badge>
+                            )}
+                          </div>
+                          <div className="flex gap-2 flex-wrap">
+                            {/* Resume Viewer Button */}
+                            <ResumeViewer candidate={candidate} variant="button" />
+                            
+                            <Dialog>
+                              <DialogTrigger asChild>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => setCurrentCandidate(candidate)}
+                                >
+                                  <Mail className="h-4 w-4 mr-2" />
+                                  Email
+                                </Button>
+                              </DialogTrigger>
+                              <DialogContent>
+                                <DialogHeader>
+                                  <DialogTitle>
+                                    Send Email to {candidate.full_name}
+                                  </DialogTitle>
+                                  <DialogDescription>
+                                    Choose a template or write a custom message
+                                  </DialogDescription>
+                                </DialogHeader>
+                                <div className="space-y-4">
+                                  <div className="flex gap-2 flex-wrap">
+                                    <Button
+                                      size="sm"
+                                      onClick={() => sendEmail("interview_invite")}
+                                    >
+                                      Interview Invite
+                                    </Button>
+                                    <Button
+                                      size="sm"
+                                      onClick={() => sendEmail("follow_up")}
+                                    >
+                                      Follow Up
+                                    </Button>
+                                    <Button
+                                      size="sm"
+                                      onClick={() => sendEmail("offer")}
+                                    >
+                                      Offer
+                                    </Button>
+                                    <Button
+                                      size="sm"
+                                      variant="destructive"
+                                      onClick={() => sendEmail("rejection")}
+                                    >
+                                      Rejection
+                                    </Button>
+                                  </div>
+                                  <Textarea
+                                    value={emailTemplate}
+                                    onChange={(e) =>
+                                      setEmailTemplate(e.target.value)
+                                    }
+                                    placeholder="Email message..."
+                                    rows={6}
+                                  />
+                                  <Button className="w-full gap-2">
+                                    <Send className="h-4 w-4" />
+                                    Send Email
+                                  </Button>
+                                </div>
+                              </DialogContent>
+                            </Dialog>
+                            <Dialog>
+                              <DialogTrigger asChild>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => setCurrentCandidate(candidate)}
+                                >
+                                  <MessageSquare className="h-4 w-4 mr-2" />
+                                  Notes
+                                </Button>
+                              </DialogTrigger>
+                              <DialogContent>
+                                <DialogHeader>
+                                  <DialogTitle>
+                                    Notes for {candidate.full_name}
+                                  </DialogTitle>
+                                </DialogHeader>
+                                <div className="space-y-4">
+                                  <div className="space-y-2 max-h-60 overflow-y-auto">
+                                    {(candidateNotes[candidate.id] || []).map(
+                                      (note, idx) => (
+                                        <Card key={idx} className="p-3">
+                                          <p className="text-sm">{note.text}</p>
+                                          <p className="text-xs text-muted-foreground mt-1">
+                                            {note.author} -{" "}
+                                            {new Date(note.timestamp).toLocaleString()}
+                                          </p>
+                                        </Card>
+                                      )
+                                    )}
+                                  </div>
+                                  <Textarea
+                                    placeholder="Add a note..."
+                                    id={`note-${candidate.id}`}
+                                  />
+                                  <Button
+                                    className="w-full"
+                                    onClick={() => {
+                                      const input = document.getElementById(
+                                        `note-${candidate.id}`
+                                      );
+                                      if (input.value) {
+                                        addNote(candidate.id, input.value);
+                                        input.value = "";
+                                      }
+                                    }}
+                                  >
+                                    <Plus className="h-4 w-4 mr-2" />
+                                    Add Note
+                                  </Button>
+                                </div>
+                              </DialogContent>
+                            </Dialog>
+                            <Dialog>
+                              <DialogTrigger asChild>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => setCurrentCandidate(candidate)}
+                                >
+                                  <Award className="h-4 w-4 mr-2" />
+                                  Feedback
+                                </Button>
+                              </DialogTrigger>
+                              <DialogContent>
+                                <DialogHeader>
+                                  <DialogTitle>
+                                    Interview Feedback - {candidate.full_name}
+                                  </DialogTitle>
+                                </DialogHeader>
+                                <div className="space-y-4">
+                                  {interviewFeedback[candidate.id] && (
+                                    <Card className="p-4 bg-muted/30">
+                                      <p className="text-sm font-medium mb-2">
+                                        Previous Feedback:
+                                      </p>
+                                      <p className="text-sm">
+                                        {interviewFeedback[candidate.id].feedback}
+                                      </p>
+                                      <p className="text-xs text-muted-foreground mt-2">
+                                        Rating: {interviewFeedback[candidate.id].rating}/5
+                                      </p>
+                                    </Card>
+                                  )}
+                                  <div>
+                                    <label className="text-sm font-medium mb-2 block">
+                                      Rating
+                                    </label>
+                                    <Select
+                                      onValueChange={(value) =>
+                                        saveFeedback(candidate.id, {
+                                          ...interviewFeedback[candidate.id],
+                                          rating: value,
+                                        })
+                                      }
+                                    >
+                                      <SelectTrigger>
+                                        <SelectValue placeholder="Select rating" />
+                                      </SelectTrigger>
+                                      <SelectContent>
+                                        <SelectItem value="5">5 - Excellent</SelectItem>
+                                        <SelectItem value="4">4 - Very Good</SelectItem>
+                                        <SelectItem value="3">3 - Good</SelectItem>
+                                        <SelectItem value="2">2 - Fair</SelectItem>
+                                        <SelectItem value="1">1 - Poor</SelectItem>
+                                      </SelectContent>
+                                    </Select>
+                                  </div>
+                                  <div>
+                                    <label className="text-sm font-medium mb-2 block">
+                                      Feedback
+                                    </label>
+                                    <Textarea
+                                      placeholder="Interview feedback..."
+                                      onChange={(e) =>
+                                        saveFeedback(candidate.id, {
+                                          ...interviewFeedback[candidate.id],
+                                          feedback: e.target.value,
+                                        })
+                                      }
+                                      rows={5}
+                                    />
+                                  </div>
+                                  <Button
+                                    className="w-full"
+                                    onClick={() => {
+                                      if (
+                                        interviewFeedback[candidate.id]?.rating &&
+                                        interviewFeedback[candidate.id]?.feedback
+                                      ) {
+                                        saveFeedback(candidate.id, {
+                                          ...interviewFeedback[candidate.id],
+                                          date: new Date().toISOString(),
+                                        });
+                                      }
+                                    }}
+                                  >
+                                    Save Feedback
+                                  </Button>
+                                </div>
+                              </DialogContent>
+                            </Dialog>
+                          </div>
+                        </div>
+                        <div className="flex flex-col items-end gap-2">
+                          <Badge
+                            variant={
+                              candidate.stage === "hired"
+                                ? "default"
+                                : candidate.stage === "interview"
+                                ? "secondary"
+                                : candidate.stage === "rejected"
+                                ? "destructive"
+                                : "outline"
+                            }
+                          >
+                            {candidate.stage || "screening"}
+                          </Badge>
+                          <input
+                            type="checkbox"
+                            checked={selectedCandidates.includes(candidate.id)}
+                            onChange={() => toggleCandidateSelection(candidate.id)}
+                            className="h-4 w-4 rounded border-gray-300"
+                          />
+                        </div>
+                      </div>
+                    </Card>
                   ))
                 ) : (
                   <Card className="p-8 text-center">
                     <Users className="h-12 w-12 mx-auto mb-3 text-muted-foreground" />
-                    <p className="text-sm font-medium mb-1">No candidates available</p>
-                    <p className="text-xs text-muted-foreground mb-4">
-                      Fetch resumes from Gmail to get started
+                    <p className="text-sm font-medium mb-1">
+                      No candidates found
                     </p>
-                    <Button onClick={fetchGmailResumes} size="sm" className="gap-2">
+                    <p className="text-xs text-muted-foreground mb-4">
+                      Try adjusting your filters or fetch resumes from Gmail
+                    </p>
+                    <Button
+                      onClick={fetchGmailResumes}
+                      size="sm"
+                      className="gap-2"
+                    >
                       <FileText className="h-4 w-4" />
                       Fetch Resumes from Gmail
                     </Button>
@@ -264,44 +903,246 @@ const Index = () => {
             </div>
           </TabsContent>
 
-          {/* Schedule Tab */}
           <TabsContent value="schedule" className="space-y-6">
-            <InterviewScheduler 
-              candidates={candidates.filter(c => c.stage === "interview")} 
-            />
+           <InterviewScheduler
+  candidates={candidates.filter((c) => 
+    c.stage === "screening" || 
+    c.stage === "interview" ||
+    !c.stage // Include candidates without a stage set
+  )}
+/>
           </TabsContent>
 
-          {/* Analytics Tab */}
           <TabsContent value="analytics" className="space-y-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <Card className="p-6">
+                <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+                  <TrendingUp className="h-5 w-5" />
+                  Stage Distribution
+                </h3>
+                <div className="space-y-3">
+                  {["screening", "interview", "offer", "hired", "rejected"].map(
+                    (stage) => {
+                      const count = candidates.filter(
+                        (c) => c.stage === stage
+                      ).length;
+                      const percentage =
+                        candidates.length > 0
+                          ? ((count / candidates.length) * 100).toFixed(0)
+                          : 0;
+                      return (
+                        <div key={stage}>
+                          <div className="flex justify-between text-sm mb-1">
+                            <span className="capitalize">{stage}</span>
+                            <span className="font-medium">
+                              {count} ({percentage}%)
+                            </span>
+                          </div>
+                          <div className="h-2 bg-muted rounded-full overflow-hidden">
+                            <div
+                              className={`h-full ${
+                                stage === "hired"
+                                  ? "bg-green-500"
+                                  : stage === "interview"
+                                  ? "bg-blue-500"
+                                  : stage === "offer"
+                                  ? "bg-purple-500"
+                                  : stage === "rejected"
+                                  ? "bg-red-500"
+                                  : "bg-gray-400"
+                              }`}
+                              style={{ width: `${percentage}%` }}
+                            />
+                          </div>
+                        </div>
+                      );
+                    }
+                  )}
+                </div>
+              </Card>
+              <Card className="p-6">
+                <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+                  <Award className="h-5 w-5" />
+                  Top Skills
+                </h3>
+                <div className="space-y-3">
+                  {(() => {
+                    const skillCounts = {};
+                    candidates.forEach((c) => {
+                      (c.skills || []).forEach((skill) => {
+                        skillCounts[skill] = (skillCounts[skill] || 0) + 1;
+                      });
+                    });
+                    const topSkills = Object.entries(skillCounts)
+                      .sort((a, b) => b[1] - a[1])
+                      .slice(0, 8);
+                    return topSkills.map(([skill, count]) => (
+                      <div key={skill}>
+                        <div className="flex justify-between text-sm mb-1">
+                          <span>{skill}</span>
+                          <span className="font-medium">{count} candidates</span>
+                        </div>
+                        <div className="h-2 bg-muted rounded-full overflow-hidden">
+                          <div
+                            className="h-full bg-gradient-to-r from-primary to-accent"
+                            style={{
+                              width: `${
+                                (count / candidates.length) * 100
+                              }%`,
+                            }}
+                          />
+                        </div>
+                      </div>
+                    ));
+                  })()}
+                </div>
+              </Card>
+              <Card className="p-6">
+                <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+                  <Star className="h-5 w-5" />
+                  Score Distribution
+                </h3>
+                <div className="space-y-3">
+                  {["90-100", "80-89", "70-79", "60-69", "Below 60"].map(
+                    (range) => {
+                      const [min, max] = range.includes("Below")
+                        ? [0, 59]
+                        : range.split("-").map(Number);
+                      const count = candidates.filter((c) => {
+                        const score = c.score || 0;
+                        return score >= min && score <= max;
+                      }).length;
+                      const percentage =
+                        candidates.length > 0
+                          ? ((count / candidates.length) * 100).toFixed(0)
+                          : 0;
+                      return (
+                        <div key={range}>
+                          <div className="flex justify-between text-sm mb-1">
+                            <span>{range} points</span>
+                            <span className="font-medium">
+                              {count} ({percentage}%)
+                            </span>
+                          </div>
+                          <div className="h-2 bg-muted rounded-full overflow-hidden">
+                            <div
+                              className={`h-full ${
+                                range.startsWith("90")
+                                  ? "bg-green-500"
+                                  : range.startsWith("80")
+                                  ? "bg-blue-500"
+                                  : range.startsWith("70")
+                                  ? "bg-yellow-500"
+                                  : range.startsWith("60")
+                                  ? "bg-orange-500"
+                                  : "bg-red-500"
+                              }`}
+                              style={{ width: `${percentage}%` }}
+                            />
+                          </div>
+                        </div>
+                      );
+                    }
+                  )}
+                </div>
+              </Card>
+              <Card className="p-6">
+                <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+                  <Briefcase className="h-5 w-5" />
+                  Experience Levels
+                </h3>
+                <div className="space-y-3">
+                  {[
+                    { label: "Entry Level (0-2y)", min: 0, max: 2 },
+                    { label: "Mid Level (2-5y)", min: 2, max: 5 },
+                    { label: "Senior (5-10y)", min: 5, max: 10 },
+                    { label: "Expert (10+y)", min: 10, max: 999 },
+                  ].map(({ label, min, max }) => {
+                    const count = candidates.filter((c) => {
+                      const totalYears = (c.experience || []).reduce(
+                        (acc, exp) =>
+                          acc + (exp.duration ? parseInt(exp.duration) : 1),
+                        0
+                      );
+                      return totalYears >= min && totalYears < max;
+                    }).length;
+                    const percentage =
+                      candidates.length > 0
+                        ? ((count / candidates.length) * 100).toFixed(0)
+                        : 0;
+                    return (
+                      <div key={label}>
+                        <div className="flex justify-between text-sm mb-1">
+                          <span>{label}</span>
+                          <span className="font-medium">
+                            {count} ({percentage}%)
+                          </span>
+                        </div>
+                        <div className="h-2 bg-muted rounded-full overflow-hidden">
+                          <div
+                            className="h-full bg-gradient-to-r from-blue-400 to-purple-500"
+                            style={{ width: `${percentage}%` }}
+                          />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </Card>
+            </div>
             <Card className="p-6">
               <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
                 <FileText className="h-5 w-5" />
-                Recruitment Analytics
+                Recruitment Summary
               </h3>
-              <div className="space-y-4">
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  <Card className="p-4 bg-muted/30">
-                    <p className="text-sm text-muted-foreground mb-1">Total Candidates</p>
-                    <p className="text-2xl font-bold">{candidates.length}</p>
-                  </Card>
-                  <Card className="p-4 bg-muted/30">
-                    <p className="text-sm text-muted-foreground mb-1">Interview Stage</p>
-                    <p className="text-2xl font-bold">
-                      {candidates.filter(c => c.stage === "interview").length}
-                    </p>
-                  </Card>
-                  <Card className="p-4 bg-muted/30">
-                    <p className="text-sm text-muted-foreground mb-1">Avg. Score</p>
-                    <p className="text-2xl font-bold">
-                      {candidates.length > 0 
-                        ? (candidates.reduce((acc, c) => acc + (c.score || 0), 0) / candidates.length).toFixed(1)
-                        : "0"}
-                    </p>
-                  </Card>
-                </div>
-                <p className="text-sm text-muted-foreground">
-                  📊 More detailed analytics coming soon — integrate with `/api/stats` for real-time insights.
-                </p>
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <Card className="p-4 bg-muted/30">
+                  <p className="text-sm text-muted-foreground mb-1">
+                    Total Candidates
+                  </p>
+                  <p className="text-3xl font-bold">{candidates.length}</p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Active in pipeline
+                  </p>
+                </Card>
+                <Card className="p-4 bg-muted/30">
+                  <p className="text-sm text-muted-foreground mb-1">
+                    Interview Stage
+                  </p>
+                  <p className="text-3xl font-bold">
+                    {candidates.filter((c) => c.stage === "interview").length}
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Ready to schedule
+                  </p>
+                </Card>
+                <Card className="p-4 bg-muted/30">
+                  <p className="text-sm text-muted-foreground mb-1">
+                    Avg. Score
+                  </p>
+                  <p className="text-3xl font-bold">
+                    {candidates.length > 0
+                      ? (
+                          candidates.reduce(
+                            (acc, c) => acc + (c.score || 0),
+                            0
+                          ) / candidates.length
+                        ).toFixed(0)
+                      : "0"}
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Out of 100 points
+                  </p>
+                </Card>
+                <Card className="p-4 bg-muted/30">
+                  <p className="text-sm text-muted-foreground mb-1">Hired</p>
+                  <p className="text-3xl font-bold">
+                    {candidates.filter((c) => c.stage === "hired").length}
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Successful placements
+                  </p>
+                </Card>
               </div>
             </Card>
           </TabsContent>

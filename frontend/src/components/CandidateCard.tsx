@@ -9,9 +9,18 @@ import {
   Calendar,
   Star,
   Clock,
-  Download
+  Download,
+  Eye,
+  FileText,
+  X
 } from "lucide-react";
-import ResumeViewer from "./ResumeViewer";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
 
 const API_BASE = "http://localhost:5000/api";
 
@@ -40,7 +49,8 @@ const CandidateCard = ({ candidate }) => {
     resumeDate: candidate.resumeDate || candidate.created_at || new Date().toLocaleDateString(),
     status: candidate.status || "active",
     filename: candidate.filename,
-    resume_filename: candidate.resume_filename
+    resume_filename: candidate.resume_filename,
+    resume_text: candidate.resume_text || candidate.raw_text || ""
   };
 
   const stageInfo = stageColors[normalizedCandidate.stage] || stageColors.new;
@@ -54,12 +64,156 @@ const CandidateCard = ({ candidate }) => {
     window.location.href = `mailto:${normalizedCandidate.email}`;
   };
 
+  const getResumeFilename = () => {
+    return normalizedCandidate.resume_filename || 
+           normalizedCandidate.filename?.replace('.json', '.pdf') || 
+           `${normalizedCandidate.id}.pdf`;
+  };
+
   const handleDownloadResume = () => {
-    const filename = normalizedCandidate.resume_filename || 
-                    normalizedCandidate.filename?.replace('.json', '.pdf') || 
-                    `${normalizedCandidate.id}.pdf`;
+    const filename = getResumeFilename();
     const url = `${API_BASE}/resumes/download/${filename}`;
-    window.open(url, '_blank');
+    
+    // Create a temporary anchor element to trigger download
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${normalizedCandidate.name.replace(/\s+/g, '_')}_Resume.pdf`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  };
+
+  const handleViewResume = () => {
+    const filename = getResumeFilename();
+    const url = `${API_BASE}/resumes/download/${filename}`;
+    window.open(url, '_blank', 'noopener,noreferrer');
+  };
+
+  const ResumeViewerModal = () => {
+    return (
+      <Dialog>
+        <DialogTrigger asChild>
+          <Button variant="outline" size="sm" className="w-full gap-2">
+            <Eye className="h-4 w-4" />
+            View Resume
+          </Button>
+        </DialogTrigger>
+        <DialogContent className="max-w-4xl max-h-[90vh] flex flex-col">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <FileText className="h-5 w-5" />
+              Resume - {normalizedCandidate.name}
+            </DialogTitle>
+          </DialogHeader>
+          
+          <div className="flex-1 flex flex-col gap-4 min-h-0">
+            {/* Resume Preview */}
+            <div className="flex-1 border rounded-lg overflow-hidden bg-gray-50">
+              {normalizedCandidate.resume_text ? (
+                <div className="h-full overflow-y-auto p-6 bg-white">
+                  <div className="prose max-w-none">
+                    <h2 className="text-2xl font-bold mb-4">{normalizedCandidate.name}</h2>
+                    
+                    {normalizedCandidate.email && (
+                      <div className="mb-4">
+                        <p><strong>Email:</strong> {normalizedCandidate.email}</p>
+                        {normalizedCandidate.phone && <p><strong>Phone:</strong> {normalizedCandidate.phone}</p>}
+                      </div>
+                    )}
+                    
+                    {normalizedCandidate.skills.length > 0 && (
+                      <div className="mb-4">
+                        <h3 className="text-lg font-semibold mb-2">Skills</h3>
+                        <div className="flex flex-wrap gap-1">
+                          {normalizedCandidate.skills.map((skill, index) => (
+                            <Badge key={index} variant="secondary" className="text-xs">
+                              {skill}
+                            </Badge>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    
+                    <div className="whitespace-pre-wrap text-sm leading-relaxed">
+                      {normalizedCandidate.resume_text}
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="h-full flex items-center justify-center">
+                  <div className="text-center p-6">
+                    <FileText className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+                    <p className="text-gray-500 mb-2">Resume preview not available</p>
+                    <p className="text-sm text-gray-400">
+                      {getResumeFilename().endsWith('.pdf') 
+                        ? 'PDF resume available for download' 
+                        : 'No resume text extracted'}
+                    </p>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Action Buttons */}
+            <div className="flex gap-2 pt-4 border-t">
+              <Button 
+                onClick={handleDownloadResume}
+                variant="default" 
+                className="flex-1 gap-2"
+              >
+                <Download className="h-4 w-4" />
+                Download Resume
+              </Button>
+              <Button 
+                onClick={handleViewResume}
+                variant="outline" 
+                className="flex-1 gap-2"
+              >
+                <ExternalLink className="h-4 w-4" />
+                Open in New Tab
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+    );
+  };
+
+  const CompactResumeViewer = () => {
+    return (
+      <Dialog>
+        <DialogTrigger asChild>
+          <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
+            <Eye className="h-4 w-4" />
+          </Button>
+        </DialogTrigger>
+        <DialogContent className="max-w-3xl max-h-[80vh]">
+          <DialogHeader>
+            <DialogTitle>Resume Preview - {normalizedCandidate.name}</DialogTitle>
+          </DialogHeader>
+          <div className="border rounded-lg p-4 max-h-[60vh] overflow-y-auto">
+            {normalizedCandidate.resume_text ? (
+              <div className="prose max-w-none text-sm">
+                <pre className="whitespace-pre-wrap font-sans">
+                  {normalizedCandidate.resume_text}
+                </pre>
+              </div>
+            ) : (
+              <div className="text-center text-gray-500 py-8">
+                <FileText className="h-8 w-8 mx-auto mb-2" />
+                <p>No resume text available</p>
+              </div>
+            )}
+          </div>
+          <div className="flex gap-2 justify-end pt-4">
+            <Button onClick={handleDownloadResume} variant="outline" size="sm" className="gap-2">
+              <Download className="h-4 w-4" />
+              Download
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+    );
   };
 
   return (
@@ -68,27 +222,30 @@ const CandidateCard = ({ candidate }) => {
         {/* Left Section: Candidate Info */}
         <div className="flex-1 space-y-4">
           <div className="flex items-start justify-between">
-            <div>
-              <div className="flex items-center gap-3 mb-2">
-                <h3 className="text-xl font-semibold text-foreground">
-                  {normalizedCandidate.name}
-                </h3>
-                <Badge className={stageInfo.bg}>{stageInfo.label}</Badge>
+            <div className="flex items-start gap-3">
+              <div>
+                <div className="flex items-center gap-3 mb-2">
+                  <h3 className="text-xl font-semibold text-foreground">
+                    {normalizedCandidate.name}
+                  </h3>
+                  <Badge className={stageInfo.bg}>{stageInfo.label}</Badge>
+                </div>
+                <p className="text-muted-foreground font-medium">
+                  {normalizedCandidate.position}
+                </p>
               </div>
-              <p className="text-muted-foreground font-medium">
-                {normalizedCandidate.position}
-              </p>
             </div>
-            {normalizedCandidate.score > 0 && (
-              <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2">
+              {normalizedCandidate.score > 0 && (
                 <div className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-amber-500/10">
                   <Star className="h-4 w-4 fill-amber-500 text-amber-500" />
                   <span className="font-bold text-amber-600 dark:text-amber-400">
                     {normalizedCandidate.score}
                   </span>
                 </div>
-              </div>
-            )}
+              )}
+              <CompactResumeViewer />
+            </div>
           </div>
 
           <div className="grid gap-2 text-sm">
@@ -173,8 +330,8 @@ const CandidateCard = ({ candidate }) => {
             Send Email
           </Button>
           
-          {/* Resume Viewer Integration */}
-          <ResumeViewer candidate={normalizedCandidate} variant="button" />
+          {/* Resume Viewer Modal */}
+          <ResumeViewerModal />
           
           <Button 
             onClick={handleDownloadResume}
