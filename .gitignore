@@ -1,1 +1,6 @@
 token.json
+.venv
+__pycache__
+path
+venv
+
