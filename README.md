@@ -1,22 +1,3 @@
-```{=html}
-<h1 align="center">
-```
-🤖 AI Recruiter Copilot
-```{=html}
-</h1>
-```
-```{=html}
-<p align="center">
-```
-`<b>`{=html}Automated Recruiting. Smarter. Faster.
-AI-Powered.`</b>`{=html}`<br>`{=html} Parse resumes, enrich data,
-schedule interviews, and manage pipelines effortlessly.
-```{=html}
-</p>
-```
-
-------------------------------------------------------------------------
-
 ## 🌟 Overview
 
 **AI Recruiter Copilot** streamlines your hiring process by automating
@@ -167,15 +148,4 @@ git push origin feature/your-feature-name
 
 ## 🧾 License
 
-This project is licensed under the **MIT License** --- see the
-[LICENSE](LICENSE) file for details.
-
-------------------------------------------------------------------------
-
-```{=html}
-<h3 align="center">
-```
-✨ Built with passion, Python, and a dash of AI ✨
-```{=html}
-</h3>
-```
+This project is licensed under the **MIT License**
